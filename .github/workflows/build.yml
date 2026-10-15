@@ -178,37 +178,52 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE}" || true
 
+      - name: Prepare deps
+        run: |
+          mkdir -p 3rdparty
+          rm -rf 3rdparty/SDL
+          wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz" -O /tmp/sdl.tar.gz
+          tar -xzf /tmp/sdl.tar.gz -C 3rdparty
+          mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
+
       - name: Diagnose cmake
         run: |
-          echo "=== CS16 cmake/ ==="
           ls -la cmake/ || true
-          echo "=== mainui_cpp CMakeLists 前 60 行 ==="
-          head -60 3rdparty/mainui_cpp/CMakeLists.txt || true
-          echo "=== mainui_cpp cmake 目录 ==="
           ls -la 3rdparty/mainui_cpp/cmake/ || true
-          echo "=== 根 CMakeLists 前 40 行 ==="
-          head -40 CMakeLists.txt || true
+          grep -n 'CMAKE_MODULE_PATH' CMakeLists.txt 3rdparty/mainui_cpp/CMakeLists.txt || true
 
-      - name: Fix FWGSLib
+      - name: Generate FWGSLib stub
         run: |
-          set +e
-          git clone --depth 1 https://github.com/FWGS/FWGSLib /tmp/FWGSLib 2>/dev/null
-          if [ -d /tmp/FWGSLib ]; then
-            echo "=== FWGSLib 仓库 ==="
-            ls -la /tmp/FWGSLib/
-            mkdir -p cmake
-            cp -v /tmp/FWGSLib/*.cmake cmake/ 2>/dev/null || true
-            mkdir -p 3rdparty/mainui_cpp/cmake
-            cp -v /tmp/FWGSLib/*.cmake 3rdparty/mainui_cpp/cmake/ 2>/dev/null || true
-          fi
-
           MF=3rdparty/mainui_cpp/CMakeLists.txt
-          if [ -f "$MF" ]; then
-            sed -i 's/^[[:space:]]*include(FWGSLib)/# include(FWGSLib)/' "$MF" || true
-            sed -i 's/^[[:space:]]*fwgs_fix_default_msvc_settings()/# fwgs_fix_default_msvc_settings()/' "$MF" || true
-            echo "=== patch 后前 60 行 ==="
-            head -60 "$MF"
+          test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
+          grep -oE 'fwgs_[a-zA-Z_][a-zA-Z0-9_]*' "$MF" | sort -u > /tmp/fwgs_funcs.txt
+          echo "=== fwgs_* funcs ==="
+          cat /tmp/fwgs_funcs.txt
+          grep -oE '\bFWGS_[A-Z_]+' "$MF" | sort -u > /tmp/fwgs_vars.txt || true
+          echo "=== FWGS_* vars ==="
+          cat /tmp/fwgs_vars.txt || true
+          mkdir -p cmake
+          {
+            echo "# auto-generated FWGSLib stub"
+            while IFS= read -r fn; do
+              [ -z "$fn" ] && continue
+              printf 'function(%s)\nendfunction()\n\n' "$fn"
+            done < /tmp/fwgs_funcs.txt
+          } > cmake/FWGSLib.cmake
+          echo "=== FWGSLib.cmake ==="
+          cat cmake/FWGSLib.cmake
+
+      - name: Force module path in mainui
+        run: |
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          TOP=$(cd .. && pwd)
+          if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
+            sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
           fi
+          sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF" || true
+          sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF" || true
+          echo "=== 前 30 行 ==="
+          head -30 "$MF"
 
       - name: Inject engine libs
         run: |
