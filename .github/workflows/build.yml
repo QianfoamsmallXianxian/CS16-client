@@ -60,48 +60,30 @@ jobs:
         working-directory: xash3d-fwgs
         run: |
           echo "=== android 顶层 ==="
-          ls -la android/ 2>/dev/null || echo "no android dir"
+          ls -la android/ || true
           echo "=== android/app ==="
-          ls -la android/app/ 2>/dev/null || true
+          ls -la android/app/ || true
           echo "=== gradle 文件 ==="
-          find android -maxdepth 3 \( -name 'build.gradle*' -o -name 'settings.gradle*' -o -name 'gradlew' \) 2>/dev/null || true
-          echo "=== SDLActivity.java 位置 ==="
-          find . -name 'SDLActivity.java' 2>/dev/null | head -5 || true
-          echo "=== 3rdparty 顶层 ==="
-          ls 3rdparty/ 2>/dev/null || true
-          echo "=== android 下的 .sh ==="
-          find android -maxdepth 2 -name '*.sh' 2>/dev/null || true
+          find android -maxdepth 3 -name 'build.gradle*' -o -name 'settings.gradle*' -o -name 'gradlew' || true
+          echo "=== android/app/build.gradle.kts 里的 SDL/abi ==="
+          grep -nE 'SDL|abiFilter|sdl' android/app/build.gradle.kts 2>/dev/null || true
+          echo "=== 官方 CI 说明 ==="
+          ls .github/workflows/ 2>/dev/null || true
+          head -80 .github/workflows/android.yml 2>/dev/null || true
 
-      - name: Setup SDL2 Java
-        working-directory: xash3d-fwgs
-        run: |
-          set -euo pipefail
-          SDL_ACT=$(find . -name 'SDLActivity.java' 2>/dev/null | head -1 || true)
-          echo "SDLActivity: $SDL_ACT"
-          if [ -z "$SDL_ACT" ]; then
-            echo "未找到 SDLActivity.java，跳过（若构建失败请看 Diagnose 输出）"
-            exit 0
-          fi
-          SRC=$(dirname "$SDL_ACT")
-          DEST="android/app/src/main/java/org/libsdl/app"
-          mkdir -p "$DEST"
-          cp -v "$SRC"/*.java "$DEST/" || true
-          ls -la "$DEST/" | head -20
-
-      - name: Restrict ABI
+      - name: Fetch SDL2 Java sources
         working-directory: xash3d-fwgs/android
         run: |
-          F=""
-          for f in app/build.gradle app/build.gradle.kts; do
-            [ -f "$f" ] && F="$f" && break
-          done
-          if [ -z "$F" ]; then
-            echo "未找到 build.gradle，跳过"
-            exit 0
-          fi
-          echo "使用: $F"
-          sed -i 's/abiFilters[^}]*/abiFilters "${{ env.TARGET_ABI }}"/' "$F" || true
-          grep -n 'abiFilters' "$F" || true
+          set -euo pipefail
+          git clone --depth 1 --branch SDL2 \
+            https://github.com/libsdl-org/SDL-2.x.git /tmp/SDL2 || \
+          git clone --depth 1 --branch release-2.30.x \
+            https://github.com/libsdl-org/SDL.git /tmp/SDL2
+          SRC_DIR=/tmp/SDL2/android-project/app/src/main/java/org/libsdl/app
+          test -d "$SRC_DIR" || { echo "SDL2 java 目录不存在: $SRC_DIR"; ls /tmp/SDL2; exit 1; }
+          mkdir -p app/src/main/java/org/libsdl/app
+          cp -v "$SRC_DIR"/*.java app/src/main/java/org/libsdl/app/
+          ls -la app/src/main/java/org/libsdl/app/ | head
 
       - name: Build engine
         working-directory: xash3d-fwgs/android
@@ -185,17 +167,6 @@ jobs:
           mkdir -p "$DEST"
           cp -v engine-libs/*.so "$DEST/"
           ls -lh "$DEST/"
-
-      - name: Restrict ABI
-        run: |
-          F=""
-          for f in android/app/build.gradle android/app/build.gradle.kts; do
-            [ -f "$f" ] && F="$f" && break
-          done
-          if [ -n "$F" ]; then
-            sed -i 's/abiFilters[^}]*/abiFilters "${{ env.TARGET_ABI }}"/' "$F" || true
-            grep -n 'abiFilters' "$F" || true
-          fi
 
       - name: Set app name
         run: |
