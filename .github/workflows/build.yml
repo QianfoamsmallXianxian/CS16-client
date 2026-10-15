@@ -14,8 +14,6 @@ concurrency:
 
 env:
   SDL_VERSION: 2.32.10
-  FFMPEG_VERSION: '9.0'
-  YY_THUNKS_VERSION: v1.2.1
   TARGET_ABI: arm64-v8a
 
 jobs:
@@ -56,21 +54,27 @@ jobs:
           cat scripts/gha/deps_android.sh || true
           echo "=== build_android.sh ==="
           cat scripts/gha/build_android.sh || true
-          echo "=== c-cpp.yml android job ==="
-          sed -n '/android/,/^  [a-z]/p' .github/workflows/c-cpp.yml 2>/dev/null | head -140 || true
 
-      - name: Run deps_android.sh
+      - name: Prepare deps manually
         run: |
           set -euo pipefail
-          chmod +x scripts/gha/*.sh scripts/*.sh 2>/dev/null || true
-          for i in 1 2 3; do
-            echo "=== attempt $i ==="
-            if bash scripts/gha/deps_android.sh; then
-              exit 0
-            fi
-            sleep 15
-          done
-          exit 1
+          mkdir -p 3rdparty
+          rm -rf 3rdparty/hlsdk-portable 3rdparty/SDL
+          git clone --depth 1 --recursive https://github.com/FWGS/hlsdk-portable 3rdparty/hlsdk-portable
+          wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz" -O /tmp/sdl.tar.gz
+          tar -xzf /tmp/sdl.tar.gz -C 3rdparty
+          mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
+          ls -la 3rdparty/
+          echo "=== SDL java ==="
+          ls 3rdparty/SDL/android-project/app/src/main/java/org/libsdl/app/ | head
+
+      - name: Patch deps_android to no-op
+        run: |
+          if [ -f scripts/gha/deps_android.sh ]; then
+            printf '#!/bin/bash\nexit 0\n' > scripts/gha/deps_android.sh
+            chmod +x scripts/gha/deps_android.sh
+            cat scripts/gha/deps_android.sh
+          fi
 
       - name: Run build_android.sh
         run: |
@@ -79,7 +83,7 @@ jobs:
 
       - name: Locate build outputs
         run: |
-          find . -maxdepth 2 -type d -name 'build*' || true
+          find . -maxdepth 3 -type d -name 'build*' || true
           find . -path '*arm64*' -name '*.so' -exec ls -lh {} \; || true
           find . -name '*.apk' -exec ls -lh {} \; || true
           find . -name '*.so' | head -60 || true
