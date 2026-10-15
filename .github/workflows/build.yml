@@ -68,6 +68,17 @@ jobs:
           echo "=== SDL java ==="
           ls 3rdparty/SDL/android-project/app/src/main/java/org/libsdl/app/ | head
 
+      - name: Link JDK to workspace java
+        run: |
+          set -euo pipefail
+          REAL_JAVA=$(dirname $(dirname $(readlink -f $(which javac))))
+          echo "REAL_JAVA=$REAL_JAVA"
+          rm -rf java
+          ln -sf "$REAL_JAVA" java
+          ls -la java/
+          ls -la java/bin/java
+          java -version
+
       - name: Patch deps_android to no-op
         run: |
           if [ -f scripts/gha/deps_android.sh ]; then
