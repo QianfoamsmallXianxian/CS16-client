@@ -15,12 +15,14 @@ concurrency:
 env:
   NDK_VERSION: r26d
   TARGET_ABI: arm64-v8a
+  TARGETOS: android
+  TARGETARCH: arm64
 
 jobs:
   engine:
     name: Build Xash3D Engine
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout xash3d-fwgs
         uses: actions/checkout@v5
@@ -44,74 +46,58 @@ jobs:
           add-to-path: true
           link-to-sdk: true
 
-      - name: Cache xash
-        uses: actions/cache@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            xash3d-fwgs/android/.cxx
-          key: xash-${{ env.TARGET_ABI }}-${{ env.NDK_VERSION }}-${{ github.sha }}
-          restore-keys: |
-            xash-${{ env.TARGET_ABI }}-${{ env.NDK_VERSION }}-
-            xash-${{ env.TARGET_ABI }}-
+          python-version: '3.x'
 
-      - name: Diagnose xash android
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config ccache
+
+      - name: Diagnose gha scripts
         working-directory: xash3d-fwgs
         run: |
-          echo "=== android/app/build.gradle.kts 里的关键行 ==="
-          grep -nE 'SDL|sdl|abiFilter|java.directories|cmake|CMake|ninja' android/app/build.gradle.kts || true
-          echo "=== 3rdparty 顶层 ==="
-          ls 3rdparty/ || true
-          echo "=== 官方 CI ==="
-          ls .github/workflows/ 2>/dev/null || true
-          head -100 .github/workflows/c-cpp.yml 2>/dev/null || true
+          ls -la scripts/gha/ || true
+          head -80 scripts/gha/deps_android.sh 2>/dev/null || echo "no deps_android.sh"
+          head -80 scripts/gha/build_android.sh 2>/dev/null || echo "no build_android.sh"
 
-      - name: Clone SDL2 full into 3rdparty/SDL
+      - name: Run deps_android.sh
         working-directory: xash3d-fwgs
-        run: |
-          set -euo pipefail
-          rm -rf 3rdparty/SDL
-          git clone --depth 1 --branch release-2.30.x \
-            https://github.com/libsdl-org/SDL.git 3rdparty/SDL
-          echo "=== SDL 顶层 ==="
-          ls 3rdparty/SDL/ | head
-          echo "=== SDL android-project ==="
-          ls 3rdparty/SDL/android-project/app/src/main/java/org/libsdl/app/ | head
-          echo "=== SDL CMakeLists ==="
-          ls 3rdparty/SDL/CMakeLists.txt
-
-      - name: Copy SDL Java into app
-        working-directory: xash3d-fwgs/android
-        run: |
-          set -euo pipefail
-          SRC=../3rdparty/SDL/android-project/app/src/main/java/org/libsdl/app
-          DEST=app/src/main/java/org/libsdl/app
-          test -d "$SRC" || { echo "SDL java 目录不存在: $SRC"; exit 1; }
-          mkdir -p "$DEST"
-          cp -v "$SRC"/*.java "$DEST/"
-          ls -la "$DEST/"
-
-      - name: Build engine
-        working-directory: xash3d-fwgs/android
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK: ${{ steps.ndk.outputs.ndk-path }}
         run: |
           set -euo pipefail
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          chmod +x scripts/gha/*.sh
+          bash scripts/gha/deps_android.sh
+
+      - name: Run build_android.sh
+        working-directory: xash3d-fwgs
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          bash scripts/gha/build_android.sh
+
+      - name: Locate build outputs
+        run: |
+          find xash3d-fwgs -maxdepth 2 -type d -name 'build*' || true
+          find xash3d-fwgs -path '*arm64*' -name '*.so' -exec ls -lh {} \; || true
+          find xash3d-fwgs -name '*.so' | head -40 || true
 
       - name: Extract so
         run: |
           set -euo pipefail
           mkdir -p engine-libs
-          APK=$(find xash3d-fwgs -name '*.apk' | head -1 || true)
-          echo "APK=$APK"
-          if [ -n "$APK" ]; then
-            unzip -j "$APK" "lib/${{ env.TARGET_ABI }}/*.so" -d engine-libs/ || true
-          fi
+          find xash3d-fwgs -path '*arm64*' -name '*.so' -exec cp -v {} engine-libs/ \; || true
           if [ -z "$(ls -A engine-libs 2>/dev/null)" ]; then
-            find xash3d-fwgs -path "*${{ env.TARGET_ABI }}*" -name '*.so' \
+            find xash3d-fwgs -name '*.so' \
+              ! -path '*x86*' ! -path '*armeabi-v7a*' ! -path '*i686*' \
               -exec cp -v {} engine-libs/ \;
           fi
           ls -lh engine-libs/ || true
