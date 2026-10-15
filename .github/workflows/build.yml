@@ -47,6 +47,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config ccache wget unzip xz-utils
 
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.ccache
+            android/.cxx
+          key: xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-${{ github.sha }}
+          restore-keys: |
+            xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-
+            xash-${{ env.TARGET_ABI }}-
+
       - name: Link JDK
         run: |
           REAL_JAVA=$(dirname "$(dirname "$(readlink -f "$(which javac)")")")
@@ -96,6 +109,11 @@ jobs:
         run: |
           mkdir -p engine-libs
           find . -path '*arm64*' -name '*.so' -exec cp -v {} engine-libs/ \; || true
+          if [ -z "$(ls -A engine-libs 2>/dev/null)" ]; then
+            find . -name '*.so' \
+              ! -path '*x86*' ! -path '*armeabi-v7a*' ! -path '*i686*' \
+              -exec cp -v {} engine-libs/ \;
+          fi
           test -n "$(ls -A engine-libs 2>/dev/null)" || { echo "no so"; exit 1; }
           ls -lh engine-libs/
 
@@ -131,6 +149,15 @@ jobs:
           java-version: 21
           distribution: temurin
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config ccache wget unzip
+
       - name: Link JDK
         run: |
           REAL_JAVA=$(dirname "$(dirname "$(readlink -f "$(which javac)")")")
@@ -151,23 +178,37 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE}" || true
 
-      - name: Diagnose cmake dirs
+      - name: Diagnose cmake
         run: |
           echo "=== CS16 cmake/ ==="
           ls -la cmake/ || true
-          echo "=== mainui_cpp 引用 ==="
-          head -50 3rdparty/mainui_cpp/CMakeLists.txt || true
-          echo "=== 根 CMakeLists ==="
+          echo "=== mainui_cpp CMakeLists 前 60 行 ==="
+          head -60 3rdparty/mainui_cpp/CMakeLists.txt || true
+          echo "=== mainui_cpp cmake 目录 ==="
+          ls -la 3rdparty/mainui_cpp/cmake/ || true
+          echo "=== 根 CMakeLists 前 40 行 ==="
           head -40 CMakeLists.txt || true
 
-      - name: Fetch FWGSLib from xash3d-fwgs
+      - name: Fix FWGSLib
         run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/FWGS/xash3d-fwgs /tmp/xash
-          cd /tmp/xash && git sparse-checkout set cmake
-          ls -la /tmp/xash/cmake/
-          mkdir -p cmake
-          cp -v /tmp/xash/cmake/* cmake/ || true
-          ls -la cmake/
+          set +e
+          git clone --depth 1 https://github.com/FWGS/FWGSLib /tmp/FWGSLib 2>/dev/null
+          if [ -d /tmp/FWGSLib ]; then
+            echo "=== FWGSLib 仓库 ==="
+            ls -la /tmp/FWGSLib/
+            mkdir -p cmake
+            cp -v /tmp/FWGSLib/*.cmake cmake/ 2>/dev/null || true
+            mkdir -p 3rdparty/mainui_cpp/cmake
+            cp -v /tmp/FWGSLib/*.cmake 3rdparty/mainui_cpp/cmake/ 2>/dev/null || true
+          fi
+
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          if [ -f "$MF" ]; then
+            sed -i 's/^[[:space:]]*include(FWGSLib)/# include(FWGSLib)/' "$MF" || true
+            sed -i 's/^[[:space:]]*fwgs_fix_default_msvc_settings()/# fwgs_fix_default_msvc_settings()/' "$MF" || true
+            echo "=== patch 后前 60 行 ==="
+            head -60 "$MF"
+          fi
 
       - name: Inject engine libs
         run: |
@@ -198,15 +239,6 @@ jobs:
                              'android:label="Counter Strike 1.6"', s)
                   mf.write_text(s)
           PY
-          grep -rn 'app_name' android/app/src/main/res/values/strings.xml || true
-
-      - name: Restrict ABI
-        run: |
-          F=android/app/build.gradle
-          if [ -f "$F" ]; then
-            sed -i 's/abiFilters[^}]*/abiFilters "arm64-v8a"/' "$F" || true
-            grep -n abiFilters "$F" || true
-          fi
 
       - name: Build APK
         working-directory: android
@@ -223,7 +255,7 @@ jobs:
         run: |
           find android/app/build/outputs/apk -name '*.apk' -exec ls -lh {} \; || true
 
-      - name: Package
+      - name: Package APK
         if: success()
         run: |
           APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
