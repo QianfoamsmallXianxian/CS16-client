@@ -4,13 +4,6 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      ndk_version:
-        required: false
-        default: '29.0.14206865'
-      sdl_version:
-        required: false
-        default: '2.32.10'
 
 permissions:
   contents: read
@@ -20,14 +13,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SDL_VERSION: ${{ github.event.inputs.sdl_version || '2.32.10' }}
+  SDL_VERSION: 2.32.10
   TARGET_ABI: arm64-v8a
   ANDROID_PLATFORM: android-35
   ANDROID_BUILD_TOOLS: 36.0.0
-  ANDROID_NDK_VERSION: ${{ github.event.inputs.ndk_version || '29.0.14206865' }}
+  ANDROID_NDK_VERSION: 29.0.14206865
   ANDROID_CMAKE: 3.22.1
   APP_NAME: "Counter Strike 1.6"
-  APP_PACKAGE: su.xash.cs16client
 
 jobs:
   engine:
@@ -56,7 +48,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config ccache wget unzip xz-utils
 
-      - name: Cache gradle + ccache
+      - name: Cache gradle ccache cxx
         uses: actions/cache@v4
         with:
           path: |
@@ -69,7 +61,7 @@ jobs:
             xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-
             xash-${{ env.TARGET_ABI }}-
 
-      - name: Link JDK to workspace
+      - name: Link JDK
         run: |
           set -euo pipefail
           REAL_JAVA=$(dirname "$(dirname "$(readlink -f "$(which javac)")")")
@@ -83,7 +75,7 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/sdk"
           ln -sfn /usr/local/lib/android/sdk "$GITHUB_WORKSPACE/sdk"
           SDKMGR=$(find /usr/local/lib/android/sdk -name sdkmanager -type f | head -1)
-          test -n "$SDKMGR" || { echo "sdkmanager not found"; exit 1; }
+          test -n "$SDKMGR" || { echo "no sdkmanager"; exit 1; }
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
           "$SDKMGR" --install \
             "platform-tools" \
@@ -92,7 +84,6 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE}" || true
           ls "$GITHUB_WORKSPACE/sdk/ndk/" || true
-          ls "$GITHUB_WORKSPACE/sdk/build-tools/" || true
 
       - name: Prepare deps
         run: |
@@ -124,11 +115,8 @@ jobs:
       - name: Collect outputs
         if: always()
         run: |
-          echo "=== build dirs ==="
           find . -maxdepth 3 -type d -name 'build*' || true
-          echo "=== arm64 .so ==="
           find . -path '*arm64*' -name '*.so' -exec ls -lh {} \; || true
-          echo "=== apks ==="
           find . -name '*.apk' -exec ls -lh {} \; || true
 
       - name: Extract artifacts
@@ -145,8 +133,8 @@ jobs:
           test -n "$(ls -A engine-libs 2>/dev/null)" || { echo "no so"; exit 1; }
           find . -name '*.apk' -exec cp -v {} engine-apk/ \; || true
           test -n "$(ls -A engine-apk 2>/dev/null)" || { echo "no apk"; exit 1; }
-          echo "=== libs ===" && ls -lh engine-libs/
-          echo "=== apk ===" && ls -lh engine-apk/
+          ls -lh engine-libs/
+          ls -lh engine-apk/
 
       - name: Upload engine libs
         if: success()
@@ -172,16 +160,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Setup Java
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           java-version: 21
           distribution: temurin
 
-      - name: Install apktool deps
+      - name: Install apktool
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y apktool zipalign
+          sudo apt-get install -y zipalign unzip
+          APKTOOL_VER=2.9.3
+          wget -q "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar" -O /tmp/apktool.jar
+          sudo mv /tmp/apktool.jar /usr/local/bin/apktool.jar
+          printf '#!/bin/bash\nexec java -jar /usr/local/bin/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
+          sudo chmod +x /usr/local/bin/apktool
+          apktool --version
+          rm -rf ~/.local/share/apktool/framework || true
 
       - name: Download engine APK
         uses: actions/download-artifact@v4
@@ -209,7 +204,6 @@ jobs:
           MF=decoded/AndroidManifest.xml
           if [ -f "$MF" ]; then
             sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_NAME }}"/g' "$MF" || true
-            grep -o 'android:label="[^"]*"' "$MF" | head -3 || true
           fi
           STR=decoded/res/values/strings.xml
           if [ -f "$STR" ]; then
@@ -239,7 +233,7 @@ jobs:
           zipalign -f -p 4 unsigned.apk aligned.apk
           ls -lh aligned.apk
 
-      - name: Sign with debug key
+      - name: Sign APK
         run: |
           set -euo pipefail
           if [ ! -f ~/.android/debug.keystore ]; then
@@ -251,9 +245,8 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
-          APKSIGNER=$(find "$ANDROID_HOME" -name apksigner -type f 2>/dev/null | sort -V | tail -1)
-          test -n "$APKSIGNER" || APKSIGNER=$(find /usr/local/lib/android/sdk -name apksigner -type f | sort -V | tail -1)
-          test -n "$APKSIGNER" || { echo "apksigner not found"; exit 1; }
+          APKSIGNER=$(find /usr/local/lib/android/sdk -name apksigner -type f | sort -V | tail -1)
+          test -n "$APKSIGNER" || { echo "no apksigner"; exit 1; }
           "$APKSIGNER" sign \
             --ks ~/.android/debug.keystore \
             --ks-pass pass:android \
@@ -267,11 +260,8 @@ jobs:
         run: |
           set -euo pipefail
           OUT=CS16Client-${{ env.TARGET_ABI }}-standalone.apk
-          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
-          echo "=== size ==="
           ls -lh "$OUT"
-          echo "=== sha256 ==="
           sha256sum "$OUT"
 
       - name: Upload final APK
