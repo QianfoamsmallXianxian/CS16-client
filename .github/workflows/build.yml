@@ -4,6 +4,13 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      ndk_version:
+        required: false
+        default: '29.0.14206865'
+      sdl_version:
+        required: false
+        default: '2.32.10'
 
 permissions:
   contents: read
@@ -13,16 +20,18 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SDL_VERSION: 2.32.10
+  SDL_VERSION: ${{ github.event.inputs.sdl_version || '2.32.10' }}
   TARGET_ABI: arm64-v8a
   ANDROID_PLATFORM: android-35
   ANDROID_BUILD_TOOLS: 36.0.0
-  ANDROID_NDK_VERSION: 29.0.14206865
+  ANDROID_NDK_VERSION: ${{ github.event.inputs.ndk_version || '29.0.14206865' }}
   ANDROID_CMAKE: 3.22.1
+  APP_NAME: "Counter Strike 1.6"
+  APP_PACKAGE: su.xash.cs16client
 
 jobs:
   engine:
-    name: Build Xash3D Engine
+    name: Build Engine + APK
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -33,14 +42,12 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           java-version: 21
           distribution: temurin
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
@@ -49,14 +56,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config ccache wget unzip xz-utils
 
+      - name: Cache gradle + ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.ccache
+            android/.cxx
+          key: xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-${{ github.sha }}
+          restore-keys: |
+            xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-
+            xash-${{ env.TARGET_ABI }}-
+
       - name: Link JDK to workspace
         run: |
           set -euo pipefail
           REAL_JAVA=$(dirname "$(dirname "$(readlink -f "$(which javac)")")")
-          echo "REAL_JAVA=$REAL_JAVA"
           rm -rf java
           ln -sfn "$REAL_JAVA" java
-          ls -la java/bin/java
           java -version
 
       - name: Setup Android SDK
@@ -65,7 +83,6 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/sdk"
           ln -sfn /usr/local/lib/android/sdk "$GITHUB_WORKSPACE/sdk"
           SDKMGR=$(find /usr/local/lib/android/sdk -name sdkmanager -type f | head -1)
-          echo "sdkmanager=$SDKMGR"
           test -n "$SDKMGR" || { echo "sdkmanager not found"; exit 1; }
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
           "$SDKMGR" --install \
@@ -74,22 +91,10 @@ jobs:
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE}" || true
-          echo "=== installed ==="
-          ls "$GITHUB_WORKSPACE/sdk/" || true
           ls "$GITHUB_WORKSPACE/sdk/ndk/" || true
           ls "$GITHUB_WORKSPACE/sdk/build-tools/" || true
 
-      - name: Diagnose
-        run: |
-          pwd
-          ls -la
-          ls scripts/gha/ || true
-          echo "=== deps_android.sh ==="
-          cat scripts/gha/deps_android.sh || true
-          echo "=== build_android.sh ==="
-          cat scripts/gha/build_android.sh || true
-
-      - name: Prepare deps manually
+      - name: Prepare deps
         run: |
           set -euo pipefail
           mkdir -p 3rdparty
@@ -98,18 +103,16 @@ jobs:
           wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz" -O /tmp/sdl.tar.gz
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
-          ls -la 3rdparty/
-          echo "=== SDL java ==="
-          ls 3rdparty/SDL/android-project/app/src/main/java/org/libsdl/app/ | head
+          ls -d 3rdparty/SDL 3rdparty/hlsdk-portable
 
-      - name: Patch deps_android to no-op
+      - name: Patch deps_android
         run: |
           if [ -f scripts/gha/deps_android.sh ]; then
             printf '#!/bin/bash\nexit 0\n' > scripts/gha/deps_android.sh
             chmod +x scripts/gha/deps_android.sh
           fi
 
-      - name: Run build_android.sh
+      - name: Build engine
         env:
           ANDROID_HOME: ${{ github.workspace }}/sdk
           ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
@@ -118,29 +121,34 @@ jobs:
           set -euo pipefail
           bash scripts/gha/build_android.sh
 
-      - name: Locate build outputs
+      - name: Collect outputs
         if: always()
         run: |
+          echo "=== build dirs ==="
           find . -maxdepth 3 -type d -name 'build*' || true
+          echo "=== arm64 .so ==="
           find . -path '*arm64*' -name '*.so' -exec ls -lh {} \; || true
+          echo "=== apks ==="
           find . -name '*.apk' -exec ls -lh {} \; || true
-          find . -name '*.so' | head -60 || true
 
-      - name: Extract so
+      - name: Extract artifacts
         if: success()
         run: |
           set -euo pipefail
-          mkdir -p engine-libs
+          mkdir -p engine-libs engine-apk
           find . -path '*arm64*' -name '*.so' -exec cp -v {} engine-libs/ \; || true
           if [ -z "$(ls -A engine-libs 2>/dev/null)" ]; then
             find . -name '*.so' \
               ! -path '*x86*' ! -path '*armeabi-v7a*' ! -path '*i686*' \
               -exec cp -v {} engine-libs/ \;
           fi
-          ls -lh engine-libs/ || true
           test -n "$(ls -A engine-libs 2>/dev/null)" || { echo "no so"; exit 1; }
+          find . -name '*.apk' -exec cp -v {} engine-apk/ \; || true
+          test -n "$(ls -A engine-apk 2>/dev/null)" || { echo "no apk"; exit 1; }
+          echo "=== libs ===" && ls -lh engine-libs/
+          echo "=== apk ===" && ls -lh engine-apk/
 
-      - name: Upload engine
+      - name: Upload engine libs
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -149,78 +157,124 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  apk:
-    name: Build Standalone APK
+      - name: Upload engine APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-apk
+          path: engine-apk/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+  package:
+    name: Package Standalone APK
     needs: engine
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: engine-libs
-          path: engine-libs
-
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           java-version: 21
           distribution: temurin
 
-      - name: Inject engine
+      - name: Install apktool deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apktool zipalign
+
+      - name: Download engine APK
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-apk
+          path: apk-in
+
+      - name: Locate APK
+        id: find
         run: |
           set -euo pipefail
-          DEST="android/app/src/main/jniLibs/${{ env.TARGET_ABI }}"
-          mkdir -p "$DEST"
-          cp -v engine-libs/*.so "$DEST/"
-          ls -lh "$DEST/"
-
-      - name: Set app name
-        run: |
-          python3 - << 'PY'
-          import re, pathlib
-          sp = pathlib.Path('android/app/src/main/res/values/strings.xml')
-          if sp.exists():
-              s = sp.read_text()
-              if 'name="app_name"' in s:
-                  s = re.sub(r'<string name="app_name">[^<]*</string>',
-                             '<string name="app_name">Counter Strike 1.6</string>', s)
-              else:
-                  s = s.replace('</resources>',
-                                '    <string name="app_name">Counter Strike 1.6</string>\n</resources>')
-              sp.write_text(s)
-          mf = pathlib.Path('android/app/src/main/AndroidManifest.xml')
-          if mf.exists():
-              s = mf.read_text()
-              if 'android:label="@string/app_name"' not in s:
-                  s = re.sub(r'android:label="[^"]*"',
-                             'android:label="Counter Strike 1.6"', s)
-                  mf.write_text(s)
-          PY
-
-      - name: Build APK
-        working-directory: android
-        run: |
-          set -euo pipefail
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleGitDebug
-
-      - name: Package APK
-        run: |
-          set -euo pipefail
-          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          ls -lh apk-in/
+          APK=$(find apk-in -name '*.apk' | head -1)
           test -n "$APK" || { echo "no apk"; exit 1; }
-          OUT="CS16Client-${{ env.TARGET_ABI }}-standalone.apk"
-          cp "$APK" "$OUT"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Decode APK
+        run: |
+          set -euo pipefail
+          apktool d -f "${{ steps.find.outputs.apk }}" -o decoded
+
+      - name: Rename app
+        run: |
+          set -euo pipefail
+          MF=decoded/AndroidManifest.xml
+          if [ -f "$MF" ]; then
+            sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_NAME }}"/g' "$MF" || true
+            grep -o 'android:label="[^"]*"' "$MF" | head -3 || true
+          fi
+          STR=decoded/res/values/strings.xml
+          if [ -f "$STR" ]; then
+            python3 - << 'PY'
+          import re, pathlib
+          sp = pathlib.Path('decoded/res/values/strings.xml')
+          s = sp.read_text()
+          if 'name="app_name"' in s:
+              s = re.sub(r'<string name="app_name">[^<]*</string>',
+                         '<string name="app_name">Counter Strike 1.6</string>', s)
+          else:
+              s = s.replace('</resources>',
+                            '    <string name="app_name">Counter Strike 1.6</string>\n</resources>')
+          sp.write_text(s)
+          PY
+          fi
+
+      - name: Rebuild APK
+        run: |
+          set -euo pipefail
+          apktool b decoded -o unsigned.apk
+          ls -lh unsigned.apk
+
+      - name: Zipalign
+        run: |
+          set -euo pipefail
+          zipalign -f -p 4 unsigned.apk aligned.apk
+          ls -lh aligned.apk
+
+      - name: Sign with debug key
+        run: |
+          set -euo pipefail
+          if [ ! -f ~/.android/debug.keystore ]; then
+            mkdir -p ~/.android
+            keytool -genkey -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          APKSIGNER=$(find "$ANDROID_HOME" -name apksigner -type f 2>/dev/null | sort -V | tail -1)
+          test -n "$APKSIGNER" || APKSIGNER=$(find /usr/local/lib/android/sdk -name apksigner -type f | sort -V | tail -1)
+          test -n "$APKSIGNER" || { echo "apksigner not found"; exit 1; }
+          "$APKSIGNER" sign \
+            --ks ~/.android/debug.keystore \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            --out CS16Client-${{ env.TARGET_ABI }}-standalone.apk \
+            aligned.apk
+          ls -lh CS16Client-${{ env.TARGET_ABI }}-standalone.apk
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          OUT=CS16Client-${{ env.TARGET_ABI }}-standalone.apk
+          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
+          echo "=== size ==="
           ls -lh "$OUT"
+          echo "=== sha256 ==="
           sha256sum "$OUT"
 
-      - name: Upload APK
+      - name: Upload final APK
         uses: actions/upload-artifact@v4
         with:
           name: CS16Client-standalone
