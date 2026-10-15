@@ -191,17 +191,15 @@ jobs:
           ls -la cmake/ || true
           ls -la 3rdparty/mainui_cpp/cmake/ || true
           grep -n 'CMAKE_MODULE_PATH' CMakeLists.txt 3rdparty/mainui_cpp/CMakeLists.txt || true
+          echo "=== mainui pkg_check_modules 行 ==="
+          grep -n 'pkg_check_modules\|pkg_search_module\|find_package' 3rdparty/mainui_cpp/CMakeLists.txt || true
 
       - name: Generate FWGSLib stub
         run: |
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
           grep -oE 'fwgs_[a-zA-Z_][a-zA-Z0-9_]*' "$MF" | sort -u > /tmp/fwgs_funcs.txt
-          echo "=== fwgs_* funcs ==="
           cat /tmp/fwgs_funcs.txt
-          grep -oE '\bFWGS_[A-Z_]+' "$MF" | sort -u > /tmp/fwgs_vars.txt || true
-          echo "=== FWGS_* vars ==="
-          cat /tmp/fwgs_vars.txt || true
           mkdir -p cmake
           {
             echo "# auto-generated FWGSLib stub"
@@ -210,20 +208,45 @@ jobs:
               printf 'function(%s)\nendfunction()\n\n' "$fn"
             done < /tmp/fwgs_funcs.txt
           } > cmake/FWGSLib.cmake
-          echo "=== FWGSLib.cmake ==="
           cat cmake/FWGSLib.cmake
 
       - name: Force module path in mainui
         run: |
           MF=3rdparty/mainui_cpp/CMakeLists.txt
-          TOP=$(cd .. && pwd)
           if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
             sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
           fi
           sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF" || true
           sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF" || true
-          echo "=== 前 30 行 ==="
           head -30 "$MF"
+
+      - name: Patch desktop deps
+        run: |
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
+          python3 - << 'PY'
+          import re, pathlib
+          p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
+          lines = p.read_text().splitlines()
+          out = []
+          targets = ('fontconfig', 'freetype', 'freetype2', 'x11', 'wayland')
+          for ln in lines:
+              m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\w+)', ln)
+              m2 = re.match(r'^(\s*)pkg_search_module\s*\(\s*(\w+)', ln)
+              key = None
+              if m: key = m.group(2).lower()
+              elif m2: key = m2.group(2).lower()
+              if key in targets:
+                  indent = (m or m2).group(1)
+                  out.append(f'{indent}if(NOT ANDROID)')
+                  out.append(ln)
+                  out.append(f'{indent}endif()')
+              else:
+                  out.append(ln)
+          p.write_text('\n'.join(out) + '\n')
+          PY
+          echo "=== pkg_check_modules 上下文 ==="
+          grep -n -B1 -A1 'pkg_check_modules\|pkg_search_module' "$MF" || true
 
       - name: Inject engine libs
         run: |
@@ -277,11 +300,8 @@ jobs:
           test -n "$APK" || { echo "no apk"; exit 1; }
           OUT="CS16Client-${TARGET_ABI}-standalone.apk"
           cp "$APK" "$OUT"
-          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
-          echo "=== size ==="
           ls -lh "$OUT"
-          echo "=== sha256 ==="
           sha256sum "$OUT"
 
       - name: Upload APK
