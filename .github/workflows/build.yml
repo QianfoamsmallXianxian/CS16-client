@@ -178,75 +178,13 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE}" || true
 
-      - name: Prepare deps
+      - name: Prepare SDL
         run: |
           mkdir -p 3rdparty
           rm -rf 3rdparty/SDL
           wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz" -O /tmp/sdl.tar.gz
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
-
-      - name: Diagnose cmake
-        run: |
-          ls -la cmake/ || true
-          ls -la 3rdparty/mainui_cpp/cmake/ || true
-          grep -n 'CMAKE_MODULE_PATH' CMakeLists.txt 3rdparty/mainui_cpp/CMakeLists.txt || true
-          echo "=== mainui pkg_check_modules 行 ==="
-          grep -n 'pkg_check_modules\|pkg_search_module\|find_package' 3rdparty/mainui_cpp/CMakeLists.txt || true
-
-      - name: Generate FWGSLib stub
-        run: |
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
-          grep -oE 'fwgs_[a-zA-Z_][a-zA-Z0-9_]*' "$MF" | sort -u > /tmp/fwgs_funcs.txt
-          cat /tmp/fwgs_funcs.txt
-          mkdir -p cmake
-          {
-            echo "# auto-generated FWGSLib stub"
-            while IFS= read -r fn; do
-              [ -z "$fn" ] && continue
-              printf 'function(%s)\nendfunction()\n\n' "$fn"
-            done < /tmp/fwgs_funcs.txt
-          } > cmake/FWGSLib.cmake
-          cat cmake/FWGSLib.cmake
-
-      - name: Force module path in mainui
-        run: |
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
-            sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
-          fi
-          sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF" || true
-          sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF" || true
-          head -30 "$MF"
-
-      - name: Patch desktop deps
-        run: |
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
-          python3 - << 'PY'
-          import re, pathlib
-          p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
-          lines = p.read_text().splitlines()
-          out = []
-          targets = ('fontconfig', 'freetype', 'freetype2', 'x11', 'wayland')
-          for ln in lines:
-              m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\w+)', ln)
-              m2 = re.match(r'^(\s*)pkg_search_module\s*\(\s*(\w+)', ln)
-              key = None
-              if m: key = m.group(2).lower()
-              elif m2: key = m2.group(2).lower()
-              if key in targets:
-                  indent = (m or m2).group(1)
-                  out.append(f'{indent}if(NOT ANDROID)')
-                  out.append(ln)
-                  out.append(f'{indent}endif()')
-              else:
-                  out.append(ln)
-          p.write_text('\n'.join(out) + '\n')
-          PY
-          echo "=== pkg_check_modules 上下文 ==="
-          grep -n -B1 -A1 'pkg_check_modules\|pkg_search_module' "$MF" || true
 
       - name: Inject engine libs
         run: |
@@ -278,15 +216,32 @@ jobs:
                   mf.write_text(s)
           PY
 
-      - name: Build APK
+      - name: List gradle tasks
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon tasks --all 2>&1 | grep -iE '^assemble|^bundle' | head -40 || true
+
+      - name: Build continuous
+        id: build_cont
+        continue-on-error: true
         working-directory: android
         env:
           ANDROID_HOME: ${{ github.workspace }}/sdk
           ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
           JAVA_HOME: ${{ github.workspace }}/java
         run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleGitDebug
+          ./gradlew --no-daemon --stacktrace assembleGitContinuous
+
+      - name: Build fallback
+        if: steps.build_cont.outcome == 'failure'
+        working-directory: android
+        env:
+          ANDROID_HOME: ${{ github.workspace }}/sdk
+          ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
+          JAVA_HOME: ${{ github.workspace }}/java
+        run: |
+          ./gradlew --no-daemon --stacktrace assembleContinuous
 
       - name: Locate APK
         if: always()
@@ -300,8 +255,11 @@ jobs:
           test -n "$APK" || { echo "no apk"; exit 1; }
           OUT="CS16Client-${TARGET_ABI}-standalone.apk"
           cp "$APK" "$OUT"
+          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
+          echo "=== size ==="
           ls -lh "$OUT"
+          echo "=== sha256 ==="
           sha256sum "$OUT"
 
       - name: Upload APK
