@@ -1,0 +1,256 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master, dev ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        type: choice
+        options: [ debug, continuous ]
+        default: debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CCACHE_COMPRESS: "true"
+  CCACHE_COMPRESSLEVEL: "6"
+  CCACHE_MAXSIZE: "500M"
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CMAKE_BUILD_PARALLEL_LEVEL: "4"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: android-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            android-${{ github.ref_name }}-
+            android-
+          max-size: 500M
+          variant: ccache
+      - name: Build APK
+        working-directory: android
+        env:
+          KEYSTORE_FILE_PATH: ${{ github.workspace }}/signingkey.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          if [[ -n "${{ secrets.SIGNING_KEY }}" ]]; then
+            echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > "$KEYSTORE_FILE_PATH"
+            ./gradlew --no-daemon --stacktrace assembleGitContinuous
+            cp app/build/outputs/apk/git/continuous/app-git-continuous.apk CS16Client-Android.apk
+          else
+            ./gradlew --no-daemon --stacktrace assembleGitDebug
+            cp app/build/outputs/apk/git/debug/app-git-debug.apk CS16Client-Android.apk
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-${{ github.sha }}
+          path: android/CS16Client-Android.apk
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: android/CS16Client-Android.apk
+          fail_on_unmatched_files: true
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        arch: [ i386, amd64 ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y \
+            libatomic1:i386 libgcc-s1:i386 libstdc++6:i386 \
+            gcc-multilib g++-multilib ninja-build \
+            libfontconfig-dev:i386 libfontconfig-dev ccache
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: linux-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: |
+            linux-${{ matrix.arch }}-
+            linux-
+          max-size: 500M
+          variant: ccache
+      - run: cmake --preset "linux-ci-${{ matrix.arch }}"
+      - run: cmake --build build --parallel 4
+      - run: cpack --config CPackConfig.cmake
+        working-directory: build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Linux-${{ matrix.arch }}-${{ github.sha }}
+          path: build/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 500M
+      SCCACHE_IDLE_TIMEOUT: 0
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+    strategy:
+      matrix:
+        arch: [ x86, amd64 ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - if: matrix.arch == 'x86'
+        run: bash scripts/setup_yy_thunks.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: cmake -DCMAKE_POLICY_DEFAULT_CMP0141=NEW --preset "win32-ci-${{ matrix.arch }}"
+      - run: cmake --build build --parallel 4
+      - run: cpack --config CPackConfig.cmake
+        working-directory: build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-${{ matrix.arch }}-${{ github.sha }}
+          path: build/*.zip
+          retention-days: 14
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - os: macos-15-intel
+            arch: x86_64
+          - os: macos-latest
+            arch: arm64
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: |
+            macos-${{ matrix.arch }}-
+            macos-
+          max-size: 500M
+          variant: ccache
+      - run: cmake --preset "macos-ci-${{ matrix.arch }}" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - run: cmake --build build --parallel 4
+      - run: cpack --config CPackConfig.cmake
+        working-directory: build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macOS-${{ matrix.arch }}-${{ github.sha }}
+          path: build/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
+  psvita:
+    name: PS Vita
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VITASDK: ${{ github.workspace }}/vitasdk
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libatomic1 libgcc-s1 libstdc++6 \
+            gcc-multilib g++-multilib ninja-build \
+            libfontconfig-dev ccache
+      - id: cache-vitasdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VITASDK }}
+          key: vitasdk-${{ runner.os }}-${{ hashFiles('scripts/psvita_sdk.sh') }}
+          restore-keys: |
+            vitasdk-${{ runner.os }}-
+      - if: steps.cache-vitasdk.outputs.cache-hit != 'true'
+        run: scripts/psvita_sdk.sh
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: psvita-${{ github.sha }}
+          restore-keys: |
+            psvita-
+          max-size: 500M
+          variant: ccache
+      - name: Configure
+        run: |
+          echo "${{ env.VITASDK }}/bin" >> "$GITHUB_PATH"
+          cmake --preset psvita-release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Generate configs
+        working-directory: build
+        run: ${{ github.workspace }}/scripts/psvita_generate_configs.sh
+      - name: Build and package
+        working-directory: build
+        run: |
+          cmake --build . --parallel 4
+          cpack --config CPackConfig.cmake
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PSVita-${{ github.sha }}
+          path: build/*.zip
+          retention-days: 14
+          if-no-files-found: error
