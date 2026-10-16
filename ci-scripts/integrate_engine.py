@@ -314,3 +314,27 @@ for f in RES.rglob('*.xml'):
         f.write_text(s2)
 
 print("done")
+
+crash_path = JAVA / 'su' / 'xash' / 'engine' / 'util' / 'CrashReports.java'
+if not crash_path.exists():
+    crash_path.parent.mkdir(parents=True, exist_ok=True)
+    _crash_src = chr(10).join([
+        'package su.xash.engine.util;',
+        '',
+        'import android.content.Context;',
+        '',
+        'public class CrashReports {',
+        '    public static final String STACKTRACE_NAME = "stacktrace.txt";',
+        '    public static void writeSystemInfo(Context context) {',
+        '    }',
+        '    public static void writeIntentInfo(Context context, String info) {',
+        '    }',
+        '}',
+        '',
+    ]) + chr(10)
+    crash_path.write_text(_crash_src)
+    print('stub CrashReports created')
+else:
+    print('CrashReports already present')
+
+print('done')
