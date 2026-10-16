@@ -149,6 +149,12 @@ jobs:
           python3 ci-scripts/add_deps.py
           grep -nA30 'dependencies {' android/app/build.gradle | head -35
 
+      - name: Patch XashActivity for crash tracking
+        run: |
+          python3 ci-scripts/patch_xashactivity.py
+          echo "=== XashActivity onCreate ==="
+          grep -nA10 'onCreate' android/app/src/main/java/su/xash/engine/XashActivity.java | head -20
+
       - name: Stub CrashReports
         run: |
           D=android/app/src/main/java/su/xash/engine/util
