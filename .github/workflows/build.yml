@@ -200,49 +200,48 @@ jobs:
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
           mkdir -p cmake
-          cat > cmake/FWGSLib.cmake << 'CMEOF'
-          include(CMakeParseArguments)
-
-          macro(fwgs_fix_default_msvc_settings)
-              if(MSVC)
-                  add_compile_options(/MP /permissive-)
-                  add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
-              endif()
-          endmacro()
-
-          function(fwgs_set_default_properties target)
-              set_target_properties(${target} PROPERTIES
-                  CXX_STANDARD 17
-                  CXX_STANDARD_REQUIRED ON
-                  CXX_EXTENSIONS OFF
-                  C_STANDARD 11
-                  C_STANDARD_REQUIRED ON
-                  POSITION_INDEPENDENT_CODE ON
-              )
-          endfunction()
-
-          function(fwgs_add_compile_options target)
-              cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})
-              if(ARG_PRIVATE)
-                  target_compile_options(${target} PRIVATE ${ARG_PRIVATE})
-              endif()
-              if(ARG_PUBLIC)
-                  target_compile_options(${target} PUBLIC ${ARG_PUBLIC})
-              endif()
-              if(ARG_INTERFACE)
-                  target_compile_options(${target} INTERFACE ${ARG_INTERFACE})
-              endif()
-          endfunction()
-
-          function(fwgs_install target)
-              if(COMMAND install)
-                  install(TARGETS ${target}
-                      RUNTIME DESTINATION bin
-                      LIBRARY DESTINATION lib
-                      ARCHIVE DESTINATION lib)
-              endif()
-          endfunction()
-          CMEOF
+          {
+            echo 'include(CMakeParseArguments)'
+            echo ''
+            echo 'macro(fwgs_fix_default_msvc_settings)'
+            echo '    if(MSVC)'
+            echo '        add_compile_options(/MP /permissive-)'
+            echo '        add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)'
+            echo '    endif()'
+            echo 'endmacro()'
+            echo ''
+            echo 'function(fwgs_set_default_properties target)'
+            echo '    set_target_properties(${target} PROPERTIES'
+            echo '        CXX_STANDARD 17'
+            echo '        CXX_STANDARD_REQUIRED ON'
+            echo '        CXX_EXTENSIONS OFF'
+            echo '        C_STANDARD 11'
+            echo '        C_STANDARD_REQUIRED ON'
+            echo '        POSITION_INDEPENDENT_CODE ON)'
+            echo 'endfunction()'
+            echo ''
+            echo 'function(fwgs_add_compile_options target)'
+            echo '    cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})'
+            echo '    if(ARG_PRIVATE)'
+            echo '        target_compile_options(${target} PRIVATE ${ARG_PRIVATE})'
+            echo '    endif()'
+            echo '    if(ARG_PUBLIC)'
+            echo '        target_compile_options(${target} PUBLIC ${ARG_PUBLIC})'
+            echo '    endif()'
+            echo '    if(ARG_INTERFACE)'
+            echo '        target_compile_options(${target} INTERFACE ${ARG_INTERFACE})'
+            echo '    endif()'
+            echo 'endfunction()'
+            echo ''
+            echo 'function(fwgs_install target)'
+            echo '    if(COMMAND install)'
+            echo '        install(TARGETS ${target}'
+            echo '            RUNTIME DESTINATION bin'
+            echo '            LIBRARY DESTINATION lib'
+            echo '            ARCHIVE DESTINATION lib)'
+            echo '    endif()'
+            echo 'endfunction()'
+          } > cmake/FWGSLib.cmake
           cat cmake/FWGSLib.cmake
 
           if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
@@ -392,7 +391,6 @@ jobs:
           print("changed:", changed)
           PY
           grep -rn 'uint64_bruh\|int64_bruh\|#define uint64\|#define int64\|#undef uint64\|#undef int64' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || echo "OK: none"
-          sed -n '30,60p' cl_dll/vgui_parser.cpp || true
 
       - name: Fix mainui XASH_SDK path
         run: |
@@ -462,7 +460,7 @@ jobs:
           fi
           grep -n 'STDINT_H' "$MF" || true
 
-      - name: Ensure _format macro
+      - name: Ensure _format macro in port.h
         run: |
           set +e
           PH=common/port.h
@@ -489,30 +487,31 @@ jobs:
       - name: Inject _format fallback into menu_int.h
         run: |
           set +e
-          python3 - << 'PY'
-          import pathlib
-          p = pathlib.Path('engine/menu_int.h')
-          if not p.exists():
-              print('menu_int.h not found')
-              raise SystemExit(0)
-          s = p.read_text()
-          if '_format_fallback_injected' in s:
-              print('already injected')
-              raise SystemExit(0)
-          header = """/* CI _format_fallback_injected */
-#ifndef _format
-# if defined(__GNUC__)
-#  define _format(x) __attribute__((format(printf,x,x+1)))
-# else
-#  define _format(x)
-# endif
-#endif
-"""
-          p.write_text(header + s)
-          print('injected _format fallback')
-          PY
-          grep -n '_format_fallback_injected' engine/menu_int.h || true
-          sed -n '1,15p' engine/menu_int.h || true
+          F=engine/menu_int.h
+          if [ ! -f "$F" ]; then
+            echo "menu_int.h not found"
+            exit 0
+          fi
+          if grep -q '_format_fallback_injected' "$F"; then
+            echo "already injected"
+            exit 0
+          fi
+          {
+            echo '/* CI _format_fallback_injected */'
+            echo '#ifndef _format'
+            echo '# if defined(__GNUC__)'
+            echo '#  define _format(x) __attribute__((format(printf,x,x+1)))'
+            echo '# else'
+            echo '#  define _format(x)'
+            echo '# endif'
+            echo '#endif'
+            echo ''
+          } > /tmp/mi_header.txt
+          cat /tmp/mi_header.txt "$F" > /tmp/mi_new.h
+          mv /tmp/mi_new.h "$F"
+          echo "injected _format fallback"
+          grep -n '_format_fallback_injected' "$F" || true
+          sed -n '1,15p' "$F" || true
 
       - name: Inject engine libs
         run: |
