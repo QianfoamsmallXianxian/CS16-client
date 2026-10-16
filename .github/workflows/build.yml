@@ -412,6 +412,21 @@ jobs:
           done
           cd $GITHUB_WORKSPACE
 
+      - name: Prepend sysroot include dirs
+        run: |
+          set +e
+          SYS=${{ github.workspace }}/sysroot
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
+          if grep -q 'CI_PREPEND_INC' "$MF"; then
+            echo "already prepended"
+            exit 0
+          fi
+          printf '# CI_PREPEND_INC\ninclude_directories("%s/include")\ninclude_directories("%s/include/freetype2")\nlink_directories("%s/lib")\n\n' "$SYS" "$SYS" "$SYS" > /tmp/header.txt
+          cat /tmp/header.txt "$MF" > /tmp/new_cm
+          mv /tmp/new_cm "$MF"
+          head -10 "$MF"
+
       - name: Prepare SDL
         run: |
           mkdir -p 3rdparty
@@ -535,11 +550,11 @@ jobs:
             {
               echo ''
               echo '# CI_FONTCONFIG_WIRED'
-              echo 'include_directories("'"$SYS"'/include" "'"$SYS"'/include/freetype2" "'"$SYS"'/include/fontconfig")'
+              echo 'include_directories("'"$SYS"'/include" "'"$SYS"'/include/freetype2")'
               echo 'link_directories("'"$SYS"'/lib")'
               echo 'foreach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64 menu)'
               echo '    if(TARGET ${_tgt})'
-              echo '        target_include_directories(${_tgt} PRIVATE "'"$SYS"'/include" "'"$SYS"'/include/freetype2" "'"$SYS"'/include/fontconfig")'
+              echo '        target_include_directories(${_tgt} PRIVATE "'"$SYS"'/include" "'"$SYS"'/include/freetype2")'
               echo '        target_link_libraries(${_tgt} PRIVATE "'"$SYS"'/lib/libfontconfig.a" "'"$SYS"'/lib/libfreetype.a" "'"$SYS"'/lib/libexpat.a" z)'
               echo '    endif()'
               echo 'endforeach()'
