@@ -405,7 +405,6 @@ jobs:
           PY
           echo "=== after ==="
           grep -rn 'uint64_bruh\|int64_bruh\|#define uint64\|#define int64\|#undef uint64\|#undef int64' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || echo "OK: none"
-          echo "=== vgui_parser.cpp 30-60 ==="
           sed -n '30,60p' cl_dll/vgui_parser.cpp || true
 
       - name: Fix mainui XASH_SDK path
@@ -413,10 +412,25 @@ jobs:
           set +e
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || { echo "no mainui CMakeLists"; exit 0; }
-          echo "=== 原始 XASH_SDK ==="
           grep -n 'XASH_SDK' "$MF" || true
-          echo "=== include_directories ==="
           grep -n 'include_directories\|target_include_directories' "$MF" | head -20 || true
+          cat > /tmp/xashmenu_include.txt << 'TXTEOF'
+          if(TARGET ${MAINUI_LIBRARY})
+              target_include_directories(${MAINUI_LIBRARY} PRIVATE
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../common
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../public
+              )
+          else()
+              include_directories(
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../common
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../../public
+              )
+          endif()
+          TXTEOF
           python3 - << 'PY'
           import pathlib, re
           p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
@@ -429,37 +443,17 @@ jobs:
               (r'set\s*\(\s*XASH_SDK\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./\s*\)',
                'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
           ]
-          hits = 0
           for old, new in pats:
-              s2, n = re.subn(old, new, s)
+              s, n = re.subn(old, new, s)
               if n:
-                  s = s2
-                  hits += n
-                  print(f"pattern hit: {old} -> {new} ({n})")
+                  print("pattern hit:", n)
           if 'xashmenu fixed include dirs' not in s:
-              s += '''
-
-# xashmenu fixed include dirs
-if(TARGET ${MAINUI_LIBRARY})
-    target_include_directories(${MAINUI_LIBRARY} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../common
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../public
-    )
-else()
-    include_directories(
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../common
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../public
-    )
-endif()
-'''
+              extra = pathlib.Path('/tmp/xashmenu_include.txt').read_text()
+              extra = '\n# xashmenu fixed include dirs\n' + extra
+              s = s + extra
               print("injected include dirs")
           p.write_text(s)
           PY
-          echo "=== 修改后 ==="
           grep -n 'XASH_SDK\|xashmenu fixed include' "$MF" || true
           find . -name 'xash3d_types.h' -not -path '*/3rdparty/mainui_cpp/3rdparty/*' 2>/dev/null | head -5
 
@@ -515,11 +509,8 @@ endif()
           test -n "$APK" || { echo "no apk"; exit 1; }
           OUT="CS16Client-${TARGET_ABI}-standalone.apk"
           cp "$APK" "$OUT"
-          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
-          echo "=== size ==="
           ls -lh "$OUT"
-          echo "=== sha256 ==="
           sha256sum "$OUT"
 
       - name: Upload APK
