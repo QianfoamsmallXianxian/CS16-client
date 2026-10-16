@@ -4,13 +4,6 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      ndk_version:
-        required: false
-        default: '29.0.14206865'
-      sdl_version:
-        required: false
-        default: '2.32.10'
 
 permissions:
   contents: read
@@ -20,11 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SDL_VERSION: ${{ github.event.inputs.sdl_version || '2.32.10' }}
+  SDL_VERSION: 2.32.10
   TARGET_ABI: arm64-v8a
   ANDROID_PLATFORM: android-35
   ANDROID_BUILD_TOOLS: 36.0.0
-  ANDROID_NDK_VERSION: ${{ github.event.inputs.ndk_version || '29.0.14206865' }}
+  ANDROID_NDK_VERSION: 29.0.14206865
   ANDROID_CMAKE: 3.22.1
 
 jobs:
@@ -33,8 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Checkout xash3d-fwgs
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           repository: FWGS/xash3d-fwgs
           submodules: recursive
@@ -54,19 +46,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config ccache wget unzip xz-utils
 
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            ~/.ccache
-            android/.cxx
-          key: xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-${{ github.sha }}
-          restore-keys: |
-            xash-${{ env.TARGET_ABI }}-${{ env.ANDROID_NDK_VERSION }}-
-            xash-${{ env.TARGET_ABI }}-
-
       - name: Link JDK
         run: |
           REAL_JAVA=$(dirname "$(dirname "$(readlink -f "$(which javac)")")")
@@ -78,14 +57,8 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/sdk"
           ln -sfn /usr/local/lib/android/sdk "$GITHUB_WORKSPACE/sdk"
           SDKMGR=$(find /usr/local/lib/android/sdk -name sdkmanager -type f | head -1)
-          test -n "$SDKMGR" || { echo "no sdkmanager"; exit 1; }
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
-          "$SDKMGR" --install \
-            "platform-tools" \
-            "platforms;${ANDROID_PLATFORM}" \
-            "build-tools;${ANDROID_BUILD_TOOLS}" \
-            "ndk;${ANDROID_NDK_VERSION}" \
-            "cmake;${ANDROID_CMAKE}" || true
+          "$SDKMGR" --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" "cmake;${ANDROID_CMAKE}" || true
 
       - name: Prepare deps
         run: |
@@ -96,7 +69,7 @@ jobs:
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
 
-      - name: Patch deps_android
+      - name: Patch deps
         run: |
           if [ -f scripts/gha/deps_android.sh ]; then
             printf '#!/bin/bash\nexit 0\n' > scripts/gha/deps_android.sh
@@ -112,20 +85,15 @@ jobs:
           bash scripts/gha/build_android.sh
 
       - name: Extract so
-        if: success()
         run: |
           mkdir -p engine-libs
           find . -path '*arm64*' -name '*.so' -exec cp -v {} engine-libs/ \; || true
           if [ -z "$(ls -A engine-libs 2>/dev/null)" ]; then
-            find . -name '*.so' \
-              ! -path '*x86*' ! -path '*armeabi-v7a*' ! -path '*i686*' \
-              -exec cp -v {} engine-libs/ \;
+            find . -name '*.so' ! -path '*x86*' ! -path '*armeabi-v7a*' -exec cp -v {} engine-libs/ \;
           fi
-          test -n "$(ls -A engine-libs 2>/dev/null)" || { echo "no so"; exit 1; }
+          test -n "$(ls -A engine-libs 2>/dev/null)"
 
-      - name: Upload engine libs
-        if: success()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: engine-libs
           path: engine-libs/*.so
@@ -157,7 +125,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install build deps
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config ccache wget unzip meson gperf
@@ -173,14 +141,8 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/sdk"
           ln -sfn /usr/local/lib/android/sdk "$GITHUB_WORKSPACE/sdk"
           SDKMGR=$(find /usr/local/lib/android/sdk -name sdkmanager -type f | head -1)
-          test -n "$SDKMGR" || { echo "no sdkmanager"; exit 1; }
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
-          "$SDKMGR" --install \
-            "platform-tools" \
-            "platforms;${ANDROID_PLATFORM}" \
-            "build-tools;${ANDROID_BUILD_TOOLS}" \
-            "ndk;${ANDROID_NDK_VERSION}" \
-            "cmake;${ANDROID_CMAKE}" || true
+          "$SDKMGR" --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" "cmake;${ANDROID_CMAKE}" || true
 
       - name: Prepare SDL
         run: |
@@ -194,24 +156,24 @@ jobs:
         run: |
           NDK="$ANDROID_NDK_HOME"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          cat > /tmp/android-arm64.ini << HDTAG1_EOF
-          [binaries]
-          c = '$BIN/aarch64-linux-android21-clang'
-          cpp = '$BIN/aarch64-linux-android21-clang++'
-          ar = '$BIN/llvm-ar'
-          strip = '$BIN/llvm-strip'
-          pkg-config = '/usr/bin/pkg-config'
-          [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'aarch64'
-          endian = 'little'
-          [properties]
-          needs_exe_wrapper = true
-          HDTAG1_EOF
+          cat > /tmp/android-arm64.ini << INI_EOF
+[binaries]
+c = '$BIN/aarch64-linux-android21-clang'
+cpp = '$BIN/aarch64-linux-android21-clang++'
+ar = '$BIN/llvm-ar'
+strip = '$BIN/llvm-strip'
+pkg-config = '/usr/bin/pkg-config'
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'
+[properties]
+needs_exe_wrapper = true
+INI_EOF
           cat /tmp/android-arm64.ini
 
-      - name: Build expat for android
+      - name: Build expat
         run: |
           set -e
           SYS=${{ github.workspace }}/sysroot
@@ -220,21 +182,11 @@ jobs:
           wget -q https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz -O expat.tar.gz
           tar xzf expat.tar.gz
           cd expat-2.5.0
-          cmake -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${TARGET_ABI} \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_INSTALL_PREFIX="$SYS" \
-            -DEXPAT_BUILD_TOOLS=OFF \
-            -DEXPAT_BUILD_EXAMPLES=OFF \
-            -DEXPAT_BUILD_TESTS=OFF \
-            -DEXPAT_BUILD_DOCS=OFF \
-            -DBUILD_SHARED_LIBS=OFF
+          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF
           cmake --build build --target install
-          ls -lh "$SYS/lib/" || true
-          ls "$SYS/lib/pkgconfig/" || true
+          ls -lh "$SYS/lib/" "$SYS/include/" || true
 
-      - name: Build freetype for android
+      - name: Build freetype
         run: |
           set -e
           SYS=${{ github.workspace }}/sysroot
@@ -242,22 +194,12 @@ jobs:
           wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
           tar xzf ft.tar.gz
           cd freetype-2.13.2
-          meson setup build \
-            --cross-file /tmp/android-arm64.ini \
-            --prefix="$SYS" \
-            --default-library=static \
-            -Dharfbuzz=disabled \
-            -Dbzip2=disabled \
-            -Dpng=disabled \
-            -Dbrotli=disabled \
-            -Dzlib=system \
-            -Dtests=disabled
+          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Dharfbuzz=disabled -Dbzip2=disabled -Dpng=disabled -Dbrotli=disabled -Dzlib=system -Dtests=disabled
           ninja -C build
           ninja -C build install
           ls "$SYS/lib/" | grep -i freetype || true
-          ls "$SYS/lib/pkgconfig/" | grep -i freetype || true
 
-      - name: Build fontconfig for android
+      - name: Build fontconfig
         run: |
           set -e
           SYS=${{ github.workspace }}/sysroot
@@ -273,29 +215,25 @@ jobs:
           ninja -C build install
           ls "$SYS/lib/" | grep -i fontconfig || true
           find "$SYS/include" -name 'fontconfig.h' || true
-          ls "$SYS/lib/pkgconfig/" | grep -i fontconfig || true
 
-      - name: Wire fontconfig into xashmenu
+      - name: Wire fontconfig
         run: |
-          set +e
           SYS=${{ github.workspace }}/sysroot
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
-          ls "$SYS/lib/"*.a 2>/dev/null
-          find "$SYS" -name 'fontconfig.h' 2>/dev/null
           if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
             {
               echo ''
               echo '# CI_FONTCONFIG_WIRED'
               echo 'if(TARGET ${MAINUI_LIBRARY})'
               echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE'
-              echo '        "'"$SYS"'/include"'
-              echo '        "'"$SYS"'/include/freetype2"'
+              echo "        $SYS/include"
+              echo "        $SYS/include/freetype2"
               echo '    )'
               echo '    target_link_libraries(${MAINUI_LIBRARY} PRIVATE'
-              echo '        "'"$SYS"'/lib/libfontconfig.a"'
-              echo '        "'"$SYS"'/lib/libfreetype.a"'
-              echo '        "'"$SYS"'/lib/libexpat.a"'
+              echo "        $SYS/lib/libfontconfig.a"
+              echo "        $SYS/lib/libfreetype.a"
+              echo "        $SYS/lib/libexpat.a"
               echo '    )'
               echo 'endif()'
             } >> "$MF"
@@ -304,152 +242,51 @@ jobs:
 
       - name: Fix FWGSLib
         run: |
-          set +e
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
           mkdir -p cmake
-          {
-            echo 'include(CMakeParseArguments)'
-            echo 'macro(fwgs_fix_default_msvc_settings)'
-            echo 'endmacro()'
-            echo 'function(fwgs_set_default_properties target)'
-            echo '    set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)'
-            echo 'endfunction()'
-            echo 'function(fwgs_add_compile_options target)'
-            echo '    cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})'
-            echo '    if(ARG_PRIVATE)'
-            echo '        target_compile_options(${target} PRIVATE ${ARG_PRIVATE})'
-            echo '    endif()'
-            echo '    if(ARG_PUBLIC)'
-            echo '        target_compile_options(${target} PUBLIC ${ARG_PUBLIC})'
-            echo '    endif()'
-            echo '    if(ARG_INTERFACE)'
-            echo '        target_compile_options(${target} INTERFACE ${ARG_INTERFACE})'
-            echo '    endif()'
-            echo 'endfunction()'
-            echo 'function(fwgs_install target)'
-            echo 'endfunction()'
-          } > cmake/FWGSLib.cmake
-          grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF" || \
-            sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
+          cat > cmake/FWGSLib.cmake << 'CM_EOF'
+include(CMakeParseArguments)
+macro(fwgs_fix_default_msvc_settings)
+endmacro()
+function(fwgs_set_default_properties target)
+    set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+endfunction()
+function(fwgs_add_compile_options target)
+    cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})
+    if(ARG_PRIVATE)
+        target_compile_options(${target} PRIVATE ${ARG_PRIVATE})
+    endif()
+    if(ARG_PUBLIC)
+        target_compile_options(${target} PUBLIC ${ARG_PUBLIC})
+    endif()
+    if(ARG_INTERFACE)
+        target_compile_options(${target} INTERFACE ${ARG_INTERFACE})
+    endif()
+endfunction()
+function(fwgs_install target)
+endfunction()
+CM_EOF
+          grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF" || sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
           sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF"
           sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF"
 
+      - name: Wrap desktop deps
+        run: python3 ci-scripts/wrap_desktop.py
+
       - name: Fix XASH_SDK and STDINT_H
         run: |
-          set +e
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
-          grep -q 'xashmenu fixed include dirs' "$MF" || {
-            echo '' >> "$MF"
-            echo 'if(TARGET ${MAINUI_LIBRARY})' >> "$MF"
-            echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../common' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../public' >> "$MF"
-            echo '    )' >> "$MF"
-            echo 'endif()' >> "$MF"
-          }
-          grep -q 'STDINT_H compile definition' "$MF" || {
-            echo '' >> "$MF"
-            echo 'if(TARGET ${MAINUI_LIBRARY})' >> "$MF"
-            echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE "STDINT_H=<cstdint>")' >> "$MF"
-            echo 'endif()' >> "$MF"
-          }
-          python3 - << 'HDTAG2_EOF'
-          import pathlib, re
-          p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
-          s = p.read_text()
-          for old, new in [
-              (r'set\s*\(\s*XASH_SDK\s+"\.\./"\s*\)', 'set(XASH_SDK "../../")'),
-              (r'set\s*\(\s*XASH_SDK\s+\.\./\s*\)', 'set(XASH_SDK "../../")'),
-          ]:
-              s, _ = re.subn(old, new, s)
-          p.write_text(s)
-          HDTAG2_EOF
+          grep -q 'xashmenu fixed include dirs' "$MF" || printf '\nif(TARGET ${MAINUI_LIBRARY})\n    target_include_directories(${MAINUI_LIBRARY} PRIVATE\n        ${CMAKE_CURRENT_SOURCE_DIR}/../../common\n        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine\n        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared\n        ${CMAKE_CURRENT_SOURCE_DIR}/../../public\n    )\nendif()\n' >> "$MF"
+          grep -q 'STDINT_H compile definition' "$MF" || printf '\nif(TARGET ${MAINUI_LIBRARY})\n    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE "STDINT_H=<cstdint>")\nendif()\n' >> "$MF"
+          python3 ci-scripts/fix_xashsdk.py
 
-      - name: Fix sources int64 bruh
-        run: |
-          set +e
-          cat > /tmp/fix_sources.py << 'HDTAG3_EOF'
-          import pathlib, re
-          root = pathlib.Path('3rdparty/mainui_cpp').resolve()
-          if root.exists():
-              pat = re.compile(r'(?<![A-Za-z0-9_./-])([A-Za-z0-9_./-]+\\.(?:cpp|cc|cxx|c))(?![A-Za-z0-9_])')
-              for cm in list(root.rglob('CMakeLists.txt')) + list(root.rglob('*.cmake')):
-                  try:
-                      text = cm.read_text()
-                  except Exception:
-                      continue
-                  base = cm.parent
-                  new = text
-                  for m in pat.finditer(text):
-                      rel = m.group(1)
-                      if (base / rel).resolve().exists():
-                          continue
-                      name = pathlib.Path(rel).name
-                      hits = [x for x in base.rglob('*') if x.is_file() and x.name.lower() == name.lower()]
-                      if hits:
-                          nr = str(hits[0].relative_to(base)).replace(chr(92), '/')
-                          new = new.replace(rel, nr)
-                          continue
-                      new = re.sub(r'(?m)^[ \\t]*' + re.escape(rel) + r'[ \\t]*\\n', '', new)
-                      new = re.sub(r'\\s+' + re.escape(rel) + r'(?=\\s)', ' ', new)
-                  if new != text:
-                      cm.write_text(new)
-
-          GUARD = 'XASH_INT64_TYPES_DEFINED'
-          for path, olds in [
-              ('3rdparty/mainui_cpp/miniutl/miniutl.h', [
-                  ('typedef int64_t int64;', '#ifndef ' + GUARD + chr(10) + 'typedef int64_t int64;'),
-                  ('typedef uint64_t uint64;', 'typedef uint64_t uint64;' + chr(10) + '#endif'),
-              ]),
-              ('engine/archtypes.h', [
-                  ('typedef long long int64;', '#ifndef ' + GUARD + chr(10) + '#define ' + GUARD + ' 1' + chr(10) + 'typedef long long int64;'),
-                  ('typedef unsigned long long uint64;', 'typedef unsigned long long uint64;' + chr(10) + '#endif'),
-              ]),
-          ]:
-              p2 = pathlib.Path(path)
-              if not p2.exists():
-                  continue
-              s2 = p2.read_text()
-              if GUARD in s2:
-                  continue
-              for old, new in olds:
-                  s2 = s2.replace(old, new)
-              p2.write_text(s2)
-
-          pats = [
-              re.compile(r'^[ \\t]*#[ \\t]*define[ \\t]+uint64[ \\t]+uint64_bruh[ \\t]*\\r?\\n', re.M),
-              re.compile(r'^[ \\t]*#[ \\t]*define[ \\t]+int64[ \\t]+int64_bruh[ \\t]*\\r?\\n', re.M),
-              re.compile(r'^[ \\t]*#undef[ \\t]+uint64[ \\t]*\\r?\\n', re.M),
-              re.compile(r'^[ \\t]*#undef[ \\t]+int64[ \\t]*\\r?\\n', re.M),
-          ]
-          for root2 in ['cl_dll','dlls','common','public','3rdparty/mainui_cpp']:
-              r = pathlib.Path(root2)
-              if not r.exists():
-                  continue
-              for f in r.rglob('*'):
-                  if not f.is_file():
-                      continue
-                  if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx'):
-                      continue
-                  try:
-                      s3 = f.read_text()
-                  except Exception:
-                      continue
-                  s4 = s3
-                  for pp in pats:
-                      s4 = pp.sub('', s4)
-                  if s4 != s3:
-                      f.write_text(s4)
-          HDTAG3_EOF
-          python3 /tmp/fix_sources.py
+      - name: Fix sources
+        run: python3 ci-scripts/fix_sources.py
 
       - name: Fix _format and int3
         run: |
-          set +e
           PH=common/port.h
           if [ -f "$PH" ] && ! grep -q 'define[[:space:]]*_format' "$PH"; then
             printf '\n#ifndef _format\n#if defined(__GNUC__)\n#define _format(x) __attribute__((format(printf,x,x+1)))\n#else\n#define _format(x)\n#endif\n#endif\n' >> "$PH"
@@ -460,135 +297,41 @@ jobs:
             cat /tmp/mi_header.txt "$F" > /tmp/mi_new.h
             mv /tmp/mi_new.h "$F"
           fi
-          cat > /tmp/fix_int3.py << 'HDTAG4_EOF'
-          import pathlib, re
-          roots = ['3rdparty/ReGameDLL_CS', '3rdparty/mainui_cpp', 'dlls', 'cl_dll', 'engine', 'common']
-          pats = [
-              (re.compile(r'#\\s*define\\s+DebuggerBreak\\s*\\(\\s*\\)\\s*[^\\n]*'), '#define DebuggerBreak() ((void)0)'),
-              (re.compile(r'#\\s*define\\s+DebuggerBreakIfDebugging\\s*\\(\\s*\\)\\s*[^\\n]*'), '#define DebuggerBreakIfDebugging() ((void)0)'),
-              (re.compile(r'#\\s*define\\s+DebugBreak\\s*\\(\\s*\\)\\s*[^\\n]*'), '#define DebugBreak() ((void)0)'),
-              (re.compile(r'__asm__\\s+__volatile__\\s*\\(\\s*"int3;?"\\s*\\)'), '((void)0)'),
-              (re.compile(r'__asm__\\s+volatile\\s*\\(\\s*"int3;?"\\s*\\)'), '((void)0)'),
-              (re.compile(r'asm\\s+volatile\\s*\\(\\s*"int3;?"\\s*\\)'), '((void)0)'),
-              (re.compile(r'asm\\s*\\(\\s*"int3;?"\\s*\\)'), '((void)0)'),
-              (re.compile(r'__asm\\s+int\\s+3\\s*;?'), '((void)0)'),
-              (re.compile(r'__debugbreak\\s*\\(\\s*\\)'), '((void)0)'),
-          ]
-          for root in roots:
-              r = pathlib.Path(root)
-              if not r.exists():
-                  continue
-              for f in r.rglob('*'):
-                  if not f.is_file():
-                      continue
-                  if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx','.inl'):
-                      continue
-                  try:
-                      s = f.read_text()
-                  except Exception:
-                      continue
-                  s2 = s
-                  for pat, rep in pats:
-                      s2 = pat.sub(rep, s2)
-                  if s2 != s:
-                      f.write_text(s2)
-          HDTAG4_EOF
-          python3 /tmp/fix_int3.py
+          python3 ci-scripts/fix_int3.py
 
       - name: Fix saverestore and version script
         run: |
-          set +e
-          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
-          if [ -f "$F" ]; then
-            python3 - << 'HDTAG5_EOF'
-            import pathlib
-            p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
-            lines = p.read_text().splitlines()
-            if len(lines) >= 429:
-                idx = 428
-                orig = lines[idx]
-                new = orig.replace('(uint32)', '(uint32)(uintptr_t)')
-                new = new.replace('reinterpret_cast<uint32>', 'reinterpret_cast<uint32>(reinterpret_cast<uintptr_t>')
-                if new != orig:
-                    lines[idx] = new
-                    p.write_text('\n'.join(lines) + '\n')
-                    print('patched 429')
-            HDTAG5_EOF
-          fi
-          python3 - << 'HDTAG6_EOF'
-          import pathlib, re
-          root = pathlib.Path('3rdparty/ReGameDLL_CS')
-          if not root.exists(): raise SystemExit(0)
-          pat = re.compile(r'[ \t]*__gcclibcxx_demangle_callback[ \t]*;?[ \t]*\r?\n')
-          for f in root.rglob('*'):
-              if not f.is_file(): continue
-              try: s = f.read_text()
-              except: continue
-              if '__gcclibcxx_demangle_callback' in s:
-                  s2 = pat.sub('', s)
-                  if s2 != s: f.write_text(s2)
-          HDTAG6_EOF
+          python3 ci-scripts/fix_saverestore.py
           MF=3rdparty/ReGameDLL_CS/CMakeLists.txt
           if [ -f "$MF" ] && ! grep -q 'CI_RELAX_PTR_CAST' "$MF"; then
-            {
-              echo ''
-              echo '# CI_RELAX_PTR_CAST'
-              echo 'add_compile_options(-Wno-error=int-to-pointer-cast)'
-              echo 'add_compile_options(-Wno-error=pointer-to-int-cast)'
-              echo 'add_compile_options(-Wno-error=int-conversion)'
-              echo 'add_compile_options(-Wno-error=constant-conversion)'
-              echo 'add_compile_options(-Wno-error=shorten-64-to-32)'
-              echo 'add_link_options(-Wl,--undefined-version)'
-            } >> "$MF"
+            printf '\n# CI_RELAX_PTR_CAST\nadd_compile_options(-Wno-error=int-to-pointer-cast)\nadd_compile_options(-Wno-error=pointer-to-int-cast)\nadd_compile_options(-Wno-error=int-conversion)\nadd_compile_options(-Wno-error=constant-conversion)\nadd_compile_options(-Wno-error=shorten-64-to-32)\nadd_link_options(-Wl,--undefined-version)\n' >> "$MF"
           fi
-          MF2=3rdparty/mainui_cpp/CMakeLists.txt
-          if [ -f "$MF2" ] && ! grep -q 'CI_DESKTOP_WRAP' "$MF2"; then
-            python3 - << 'HDTAG7_EOF'
-            import re, pathlib
-            p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
-            lines = p.read_text().splitlines()
-            out = []
-            targets = ('fontconfig','freetype','freetype2','x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')
-            for ln in lines:
-                m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\S+)\s+(?:REQUIRED\s+|QUIET\s+|NO_CMAKE_PATH\s+)*([\w.-]+)', ln)
-                if m:
-                    indent, module = m.group(1), m.group(3).lower().split('>=')[0].split('<')[0].strip()
-                    if module in targets or any(module.startswith(t) for t in targets):
-                        out.append(f'{indent}if(NOT ANDROID)')
-                        out.append(ln)
-                        out.append(f'{indent}endif()')
-                        continue
-                out.append(ln)
-            p.write_text('\n'.join(out) + '\n')
-            HDTAG7_EOF
-          fi
-          cp -v engine-libs/*.so android/app/src/main/jniLibs/${TARGET_ABI}/ 2>/dev/null || {
-            DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
-            mkdir -p "$DEST"
-            cp -v engine-libs/*.so "$DEST/"
-          }
+
+      - name: Inject engine libs
+        run: |
+          DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
+          mkdir -p "$DEST"
+          cp -v engine-libs/*.so "$DEST/"
 
       - name: Set app name
         run: |
-          python3 - << 'HDTAG8_EOF'
-          import re, pathlib
-          sp = pathlib.Path('android/app/src/main/res/values/strings.xml')
-          if sp.exists():
-              s = sp.read_text()
-              if 'name="app_name"' in s:
-                  s = re.sub(r'<string name="app_name">[^<]*</string>',
-                             '<string name="app_name">Counter Strike 1.6</string>', s)
-              else:
-                  s = s.replace('</resources>',
-                                '    <string name="app_name">Counter Strike 1.6</string>\n</resources>')
-              sp.write_text(s)
-          mf = pathlib.Path('android/app/src/main/AndroidManifest.xml')
-          if mf.exists():
-              s = mf.read_text()
-              if 'android:label="@string/app_name"' not in s:
-                  s = re.sub(r'android:label="[^"]*"', 'android:label="Counter Strike 1.6"', s)
-                  mf.write_text(s)
-          HDTAG8_EOF
+          python3 - << 'PYNAM'
+import re, pathlib
+sp = pathlib.Path('android/app/src/main/res/values/strings.xml')
+if sp.exists():
+    s = sp.read_text()
+    if 'name="app_name"' in s:
+        s = re.sub(r'<string name="app_name">[^<]*</string>', '<string name="app_name">Counter Strike 1.6</string>', s)
+    else:
+        s = s.replace('</resources>', '    <string name="app_name">Counter Strike 1.6</string>\n</resources>')
+    sp.write_text(s)
+mf = pathlib.Path('android/app/src/main/AndroidManifest.xml')
+if mf.exists():
+    s = mf.read_text()
+    if 'android:label="@string/app_name"' not in s:
+        s = re.sub(r'android:label="[^"]*"', 'android:label="Counter Strike 1.6"', s)
+        mf.write_text(s)
+PYNAM
 
       - name: Build APK
         id: build_apk
@@ -603,28 +346,25 @@ jobs:
           set -o pipefail
           ./gradlew --no-daemon assembleGitDebug 2>&1 | tee /tmp/build_apk.log
 
-      - name: Extract errors only
+      - name: Extract errors
         if: always()
         run: |
-          set +e
           mkdir -p /tmp/errors
           LOG=/tmp/build_apk.log
           OUT=/tmp/errors/errors.txt
           {
             echo "=== run_id: ${{ github.run_id }} ==="
             echo "=== commit: ${{ github.sha }} ==="
-            echo "=== timestamp: $(date -u +%FT%TZ) ==="
             echo ""
             echo "=== REAL ERRORS ==="
           } > "$OUT"
           if [ ! -f "$LOG" ]; then
-            echo "no build log" >> "$OUT"
+            echo "no log" >> "$OUT"
             cat "$OUT"
             exit 0
           fi
           FILTER='force_align_arg_pointer|unknown-attributes|Wunknown-attributes|Wdeprecated-declarations|overrides a member function|no previous prototype|Wunused|Wsign-compare|Wshadow|Wformat|declared here|note: expanded|in file included from|^note:|Wmissing-braces|Wpragma-pack|Wdivision-by-zero|Wswitch|Wparentheses|Wtautological|Wbitwise|Wsometimes-uninitialized|Wmacro-redefined|previous definition is here'
-          grep -nE "error:|fatal error:|FAILED:|FAILURE:|undefined reference|ninja: build stopped|What went wrong|Execution failed|Caused by:|ld: |cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file" "$LOG" \
-            | grep -vE "$FILTER" | head -200 >> "$OUT" || true
+          grep -nE "error:|fatal error:|FAILED:|FAILURE:|undefined reference|ninja: build stopped|What went wrong|Execution failed|Caused by:|ld: |cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file" "$LOG" | grep -vE "$FILTER" | head -200 >> "$OUT" || true
           {
             echo ""
             echo "=== TAIL (last 60) ==="
@@ -633,9 +373,8 @@ jobs:
           wc -l "$OUT"
           cat "$OUT"
 
-      - name: Upload errors log
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: build-errors-log
           path: /tmp/errors/errors.txt
@@ -656,9 +395,8 @@ jobs:
           unzip -l "$OUT" | grep '\.so' || true
           sha256sum "$OUT"
 
-      - name: Upload APK
+      - uses: actions/upload-artifact@v4
         if: success()
-        uses: actions/upload-artifact@v4
         with:
           name: CS16Client-standalone
           path: CS16Client-${TARGET_ABI}-standalone.apk
