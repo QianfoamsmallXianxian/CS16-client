@@ -7,7 +7,7 @@ targets = [
     '3rdparty/mainui_cpp/font/CMakeLists.txt',
 ]
 
-KEEP_PKGS = {'freetype', 'freetype2', 'fontconfig', 'expat'}
+KEEP_PKGS = set()
 
 for path in targets:
     p = pathlib.Path(path)

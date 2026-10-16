@@ -532,5 +532,17 @@ jobs:
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
           if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
-            printf '\n# CI_FONTCONFIG_WIRED\nif(TARGET ${MAINUI_LIBRARY})\n    target_include_directories(${MAINUI_LIBRARY} PRIVATE\n        %s/include\n        %s/include/freetype2\n    )\n    target_link_libraries(${MAINUI_LIBRARY} PRIVATE\n        %s/lib/libfontconfig.a\n        %s/lib/libfreetype.a\n        %s/lib/libexpat.a\n    )\nendif()\n' "$SYS" "$SYS" "$SYS" "$SYS" "$SYS" >> "$MF"
+            {
+              echo ''
+              echo '# CI_FONTCONFIG_WIRED'
+              echo 'include_directories("'"$SYS"'/include" "'"$SYS"'/include/freetype2" "'"$SYS"'/include/fontconfig")'
+              echo 'link_directories("'"$SYS"'/lib")'
+              echo 'foreach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64 menu)'
+              echo '    if(TARGET ${_tgt})'
+              echo '        target_include_directories(${_tgt} PRIVATE "'"$SYS"'/include" "'"$SYS"'/include/freetype2" "'"$SYS"'/include/fontconfig")'
+              echo '        target_link_libraries(${_tgt} PRIVATE "'"$SYS"'/lib/libfontconfig.a" "'"$SYS"'/lib/libfreetype.a" "'"$SYS"'/lib/libexpat.a" z)'
+              echo '    endif()'
+              echo 'endforeach()'
+            } >> "$MF"
           fi
+          grep -n -A15 'CI_FONTCONFIG_WIRED' "$MF"
