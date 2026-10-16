@@ -507,6 +507,62 @@ jobs:
             } >> "$MF"
           fi
 
+      - name: Fix version script for arm64
+        run: |
+          set +e
+          echo "=== version script refs ==="
+          grep -rn 'version-script\|version_script' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -10
+          echo "=== __gcclibcxx refs ==="
+          grep -rn '__gcclibcxx_demangle_callback' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -10
+          echo "=== .map / .ver / .vers files ==="
+          find 3rdparty/ReGameDLL_CS -type f \( -name '*.map' -o -name '*.ver' -o -name '*.vers' -o -name '*.version' \) 2>/dev/null | head -20
+
+          python3 - << 'PY'
+          import pathlib, re
+          root = pathlib.Path('3rdparty/ReGameDLL_CS')
+          if not root.exists():
+              raise SystemExit(0)
+          pat = re.compile(r'[ \t]*__gcclibcxx_demangle_callback[ \t]*;?[ \t]*\r?\n')
+          changed = []
+          for f in root.rglob('*'):
+              if not f.is_file():
+                  continue
+              if f.suffix not in ('.map', '.ver', '.vers', '.version', '.txt', '.cmake', '.in'):
+                  try:
+                      s = f.read_text()
+                  except Exception:
+                      continue
+                  if '__gcclibcxx_demangle_callback' in s:
+                      s2 = pat.sub('', s)
+                      if s2 != s:
+                          f.write_text(s2)
+                          changed.append(str(f))
+                  continue
+              try:
+                  s = f.read_text()
+              except Exception:
+                  continue
+              if '__gcclibcxx_demangle_callback' in s:
+                  s2 = pat.sub('', s)
+                  if s2 != s:
+                      f.write_text(s2)
+                      changed.append(str(f))
+          print('removed from:', changed)
+          PY
+
+          MF=3rdparty/ReGameDLL_CS/CMakeLists.txt
+          if [ -f "$MF" ] && ! grep -q 'CI_UNDEFINED_VERSION' "$MF"; then
+            {
+              echo ''
+              echo '# CI_UNDEFINED_VERSION'
+              echo 'add_link_options(-Wl,--undefined-version)'
+              echo 'add_compile_options(-Wno-error=unused-command-line-argument)'
+            } >> "$MF"
+            echo "injected undefined-version"
+          fi
+          echo "=== after ==="
+          grep -rn '__gcclibcxx_demangle_callback' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -5 || echo "OK: none"
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
