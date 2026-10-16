@@ -426,6 +426,6 @@ jobs:
         if: success()
         with:
           name: CS16Client-standalone
-          path: CS16Client-${TARGET_ABI}-standalone.apk
+          path: CS16Client-${{ env.TARGET_ABI }}-standalone.apk
           retention-days: 30
           if-no-files-found: error
