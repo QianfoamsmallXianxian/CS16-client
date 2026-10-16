@@ -372,11 +372,13 @@ jobs:
           grep -rn 'uint64_bruh' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || true
           python3 - << 'PY'
           import pathlib, re
-          roots = ['cl_dll', 'dlls', 'common', 'public', '3rdparty/mainui_cpp']
-          pat = re.compile(r'^[ \t]*#[ \t]*define[ \t]+uint64[ \t]+uint64_bruh[ \t]*\r?\n', re.M)
-          pat2 = re.compile(r'^[ \t]*#[ \t]*define[ \t]+int64[ \t]+int64_bruh[ \t]*\r?\n', re.M)
-          pat3 = re.compile(r'^[ \t]*#undef[ \t]+uint64[ \t]*\r?\n', re.M)
-          pat4 = re.compile(r'^[ \t]*#undef[ \t]+int64[ \t]*\r?\n', re.M)
+          roots = ['cl_dll','dlls','common','public','3rdparty/mainui_cpp']
+          pats = [
+              re.compile(r'^[ \t]*#[ \t]*define[ \t]+uint64[ \t]+uint64_bruh[ \t]*\r?\n', re.M),
+              re.compile(r'^[ \t]*#[ \t]*define[ \t]+int64[ \t]+int64_bruh[ \t]*\r?\n', re.M),
+              re.compile(r'^[ \t]*#undef[ \t]+uint64[ \t]*\r?\n', re.M),
+              re.compile(r'^[ \t]*#undef[ \t]+int64[ \t]*\r?\n', re.M),
+          ]
           changed = []
           for root in roots:
               r = pathlib.Path(root)
@@ -391,10 +393,9 @@ jobs:
                       s = f.read_text()
                   except Exception:
                       continue
-                  s2 = pat.sub('', s)
-                  s2 = pat2.sub('', s2)
-                  s2 = pat3.sub('', s2)
-                  s2 = pat4.sub('', s2)
+                  s2 = s
+                  for p in pats:
+                      s2 = p.sub('', s2)
                   if s2 != s:
                       f.write_text(s2)
                       changed.append(str(f))
@@ -406,6 +407,61 @@ jobs:
           grep -rn 'uint64_bruh\|int64_bruh\|#define uint64\|#define int64\|#undef uint64\|#undef int64' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || echo "OK: none"
           echo "=== vgui_parser.cpp 30-60 ==="
           sed -n '30,60p' cl_dll/vgui_parser.cpp || true
+
+      - name: Fix mainui XASH_SDK path
+        run: |
+          set +e
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || { echo "no mainui CMakeLists"; exit 0; }
+          echo "=== 原始 XASH_SDK ==="
+          grep -n 'XASH_SDK' "$MF" || true
+          echo "=== include_directories ==="
+          grep -n 'include_directories\|target_include_directories' "$MF" | head -20 || true
+          python3 - << 'PY'
+          import pathlib, re
+          p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
+          s = p.read_text()
+          pats = [
+              (r'set\s*\(\s*XASH_SDK\s+"\.\./"\s*\)', 'set(XASH_SDK "../../")'),
+              (r'set\s*\(\s*XASH_SDK\s+\.\./\s*\)', 'set(XASH_SDK "../../")'),
+              (r'set\s*\(\s*XASH_SDK\s+"\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./"\s*\)',
+               'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
+              (r'set\s*\(\s*XASH_SDK\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./\s*\)',
+               'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
+          ]
+          hits = 0
+          for old, new in pats:
+              s2, n = re.subn(old, new, s)
+              if n:
+                  s = s2
+                  hits += n
+                  print(f"pattern hit: {old} -> {new} ({n})")
+          if 'xashmenu fixed include dirs' not in s:
+              s += '''
+
+# xashmenu fixed include dirs
+if(TARGET ${MAINUI_LIBRARY})
+    target_include_directories(${MAINUI_LIBRARY} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../common
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../public
+    )
+else()
+    include_directories(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../common
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../public
+    )
+endif()
+'''
+              print("injected include dirs")
+          p.write_text(s)
+          PY
+          echo "=== 修改后 ==="
+          grep -n 'XASH_SDK\|xashmenu fixed include' "$MF" || true
+          find . -name 'xash3d_types.h' -not -path '*/3rdparty/mainui_cpp/3rdparty/*' 2>/dev/null | head -5
 
       - name: Inject engine libs
         run: |
