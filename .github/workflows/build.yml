@@ -268,15 +268,7 @@ jobs:
           export PKG_CONFIG_PATH="$SYS/lib/pkgconfig:$SYS/share/pkgconfig"
           export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
           export PKG_CONFIG_SYSROOT_DIR="$SYS"
-          meson setup build \
-            --cross-file /tmp/android-arm64.ini \
-            --prefix="$SYS" \
-            --default-library=static \
-            -Ddoc=disabled \
-            -Dnls=disabled \
-            -Dtests=disabled \
-            -Dtools=disabled \
-            -Dcache-build=disabled \
+          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled
           ninja -C build
           ninja -C build install
           ls "$SYS/lib/" | grep -i fontconfig || true
