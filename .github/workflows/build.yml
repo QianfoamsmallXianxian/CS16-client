@@ -563,6 +563,80 @@ jobs:
           echo "=== after ==="
           grep -rn '__gcclibcxx_demangle_callback' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -5 || echo "OK: none"
 
+      - name: Fix fontconfig for android
+        run: |
+          set +e
+          echo "=== scan fontconfig ==="
+          grep -rn 'fontconfig' 3rdparty/mainui_cpp/ 2>/dev/null | head -20 || true
+          python3 - << 'PY'
+          import pathlib, re
+          root = pathlib.Path('3rdparty/mainui_cpp')
+          if not root.exists():
+              raise SystemExit(0)
+          changed = []
+          for f in root.rglob('*'):
+              if not f.is_file():
+                  continue
+              if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx'):
+                  continue
+              try:
+                  s = f.read_text()
+              except Exception:
+                  continue
+              orig = s
+              s = re.sub(r'^[ \t]*#\s*include\s*[<"]fontconfig/fontconfig\.h[>"][ \t]*\r?\n', '', s, flags=re.M)
+              s = re.sub(r'^[ \t]*#\s*include\s*[<"]fontconfig[>"][ \t]*\r?\n', '', s, flags=re.M)
+              if s != orig:
+                  f.write_text(s)
+                  changed.append(str(f))
+          print('include removed from:', changed)
+          PY
+          python3 - << 'PY'
+          import pathlib, re
+          root = pathlib.Path('3rdparty/mainui_cpp')
+          if not root.exists():
+              raise SystemExit(0)
+          pat = re.compile(r'\b(Fc[A-Z][A-Za-z0-9_]*)\s*\(')
+          changed = []
+          for f in root.rglob('*.cpp'):
+              try:
+                  s = f.read_text()
+              except Exception:
+                  continue
+              if not pat.search(s):
+                  continue
+              s2 = '#define CI_FONTCONFIG_STUBBED 1\n'
+              s2 += 'static inline void *FcInit(void){return 0;}\n'
+              s2 += 'static inline void *FcPatternCreate(void){return 0;}\n'
+              s2 += 'static inline void  FcPatternDestroy(void*p){(void)p;}\n'
+              s2 += 'static inline void  FcConfigSubstitute(void*a,void*b,int c){(void)a;(void)b;(void)c;}\n'
+              s2 += 'static inline void  FcDefaultSubstitute(void*a){(void)a;}\n'
+              s2 += 'static inline int   FcPatternAddString(void*a,const char*b,const unsigned char*c){(void)a;(void)b;(void)c;return 0;}\n'
+              s2 += 'static inline int   FcPatternAddInteger(void*a,const char*b,int c){(void)a;(void)b;(void)c;return 0;}\n'
+              s2 += 'static inline int   FcPatternAddDouble(void*a,const char*b,double c){(void)a;(void)b;(void)c;return 0;}\n'
+              s2 += 'static inline int   FcPatternAddBool(void*a,const char*b,int c){(void)a;(void)b;(void)c;return 0;}\n'
+              s2 += 'static inline int   FcConfigSubstituteWithPat(void*a,void*b,void*c,int d){(void)a;(void)b;(void)c;(void)d;return 0;}\n'
+              s2 += 'static inline void  FcFontSetDestroy(void*a){(void)a;}\n'
+              s2 += 'static inline void  FcCharSetDestroy(void*a){(void)a;}\n'
+              s2 = s2 + s
+              f.write_text(s2)
+              changed.append(str(f))
+          print('fontconfig stub prepended to:', changed)
+          PY
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          if [ -f "$MF" ] && ! grep -q 'CI_DISABLE_FREETYPE' "$MF"; then
+            {
+              echo ''
+              echo '# CI_DISABLE_FREETYPE'
+              echo 'if(TARGET ${MAINUI_LIBRARY})'
+              echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE MAINUI_USE_FREETYPE=0)'
+              echo 'endif()'
+            } >> "$MF"
+            echo "injected MAINUI_USE_FREETYPE=0"
+          fi
+          echo "=== after ==="
+          grep -rn 'fontconfig/fontconfig.h' 3rdparty/mainui_cpp/ 2>/dev/null | head -5 || echo "OK: none"
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
