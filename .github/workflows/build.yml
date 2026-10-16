@@ -365,6 +365,48 @@ jobs:
           echo "=== archtypes.h ==="
           grep -n -B1 -A1 'int64\|uint64' engine/archtypes.h 2>/dev/null | head -20 || true
 
+      - name: Remove uint64_bruh hacks
+        run: |
+          set +e
+          echo "=== scan uint64_bruh ==="
+          grep -rn 'uint64_bruh' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || true
+          python3 - << 'PY'
+          import pathlib, re
+          roots = ['cl_dll', 'dlls', 'common', 'public', '3rdparty/mainui_cpp']
+          pat = re.compile(r'^[ \t]*#[ \t]*define[ \t]+uint64[ \t]+uint64_bruh[ \t]*\r?\n', re.M)
+          pat2 = re.compile(r'^[ \t]*#[ \t]*define[ \t]+int64[ \t]+int64_bruh[ \t]*\r?\n', re.M)
+          pat3 = re.compile(r'^[ \t]*#undef[ \t]+uint64[ \t]*\r?\n', re.M)
+          pat4 = re.compile(r'^[ \t]*#undef[ \t]+int64[ \t]*\r?\n', re.M)
+          changed = []
+          for root in roots:
+              r = pathlib.Path(root)
+              if not r.exists():
+                  continue
+              for f in r.rglob('*'):
+                  if not f.is_file():
+                      continue
+                  if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx'):
+                      continue
+                  try:
+                      s = f.read_text()
+                  except Exception:
+                      continue
+                  s2 = pat.sub('', s)
+                  s2 = pat2.sub('', s2)
+                  s2 = pat3.sub('', s2)
+                  s2 = pat4.sub('', s2)
+                  if s2 != s:
+                      f.write_text(s2)
+                      changed.append(str(f))
+          print("=== changed ===")
+          for f in changed:
+              print("  ", f)
+          PY
+          echo "=== after ==="
+          grep -rn 'uint64_bruh\|int64_bruh\|#define uint64\|#define int64\|#undef uint64\|#undef int64' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || echo "OK: none"
+          echo "=== vgui_parser.cpp 30-60 ==="
+          sed -n '30,60p' cl_dll/vgui_parser.cpp || true
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
