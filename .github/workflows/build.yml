@@ -122,7 +122,6 @@ jobs:
               -exec cp -v {} engine-libs/ \;
           fi
           test -n "$(ls -A engine-libs 2>/dev/null)" || { echo "no so"; exit 1; }
-          ls -lh engine-libs/
 
       - name: Upload engine libs
         if: success()
@@ -137,7 +136,7 @@ jobs:
     name: Build CS16 Client APK
     needs: engine
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:
@@ -161,7 +160,7 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config ccache wget unzip
+          sudo apt-get install -y ninja-build pkg-config ccache wget unzip meson gperf
 
       - name: Link JDK
         run: |
@@ -191,6 +190,128 @@ jobs:
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
 
+      - name: Generate cross file
+        run: |
+          NDK="$ANDROID_NDK_HOME"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          cat > /tmp/android-arm64.ini << CFEOF
+          [binaries]
+          c = '$BIN/aarch64-linux-android21-clang'
+          cpp = '$BIN/aarch64-linux-android21-clang++'
+          ar = '$BIN/llvm-ar'
+          strip = '$BIN/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
+          CFEOF
+          cat /tmp/android-arm64.ini
+
+      - name: Build expat for android
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          mkdir -p "$SYS"
+          cd /tmp
+          wget -q https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz -O expat.tar.gz
+          tar xzf expat.tar.gz
+          cd expat-2.5.0
+          cmake -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${TARGET_ABI} \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_INSTALL_PREFIX="$SYS" \
+            -DEXPAT_BUILD_TOOLS=OFF \
+            -DEXPAT_BUILD_EXAMPLES=OFF \
+            -DEXPAT_BUILD_TESTS=OFF \
+            -DEXPAT_BUILD_DOCS=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --target install
+          ls -lh "$SYS/lib/" || true
+          ls "$SYS/lib/pkgconfig/" || true
+
+      - name: Build freetype for android
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          cd /tmp
+          wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
+          tar xzf ft.tar.gz
+          cd freetype-2.13.2
+          meson setup build \
+            --cross-file /tmp/android-arm64.ini \
+            --prefix="$SYS" \
+            --default-library=static \
+            -Dharfbuzz=disabled \
+            -Dbzip2=disabled \
+            -Dpng=disabled \
+            -Dbrotli=disabled \
+            -Dzlib=system \
+            -Dtests=disabled
+          ninja -C build
+          ninja -C build install
+          ls "$SYS/lib/" | grep -i freetype || true
+          ls "$SYS/lib/pkgconfig/" | grep -i freetype || true
+
+      - name: Build fontconfig for android
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          cd /tmp
+          wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
+          tar xzf fc.tar.gz
+          cd fontconfig-2.14.2
+          export PKG_CONFIG_PATH="$SYS/lib/pkgconfig:$SYS/share/pkgconfig"
+          export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
+          export PKG_CONFIG_SYSROOT_DIR="$SYS"
+          meson setup build \
+            --cross-file /tmp/android-arm64.ini \
+            --prefix="$SYS" \
+            --default-library=static \
+            -Ddoc=disabled \
+            -Dnls=disabled \
+            -Dtests=disabled \
+            -Dtools=disabled \
+            -Dcache-build=disabled \
+            -Dxml-backend=expat \
+            -Dfreetype=enabled
+          ninja -C build
+          ninja -C build install
+          ls "$SYS/lib/" | grep -i fontconfig || true
+          find "$SYS/include" -name 'fontconfig.h' || true
+          ls "$SYS/lib/pkgconfig/" | grep -i fontconfig || true
+
+      - name: Wire fontconfig into xashmenu
+        run: |
+          set +e
+          SYS=${{ github.workspace }}/sysroot
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
+          ls "$SYS/lib/"*.a 2>/dev/null
+          find "$SYS" -name 'fontconfig.h' 2>/dev/null
+          if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
+            {
+              echo ''
+              echo '# CI_FONTCONFIG_WIRED'
+              echo 'if(TARGET ${MAINUI_LIBRARY})'
+              echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE'
+              echo '        "'"$SYS"'/include"'
+              echo '        "'"$SYS"'/include/freetype2"'
+              echo '    )'
+              echo '    target_link_libraries(${MAINUI_LIBRARY} PRIVATE'
+              echo '        "'"$SYS"'/lib/libfontconfig.a"'
+              echo '        "'"$SYS"'/lib/libfreetype.a"'
+              echo '        "'"$SYS"'/lib/libexpat.a"'
+              echo '    )'
+              echo 'endif()'
+            } >> "$MF"
+          fi
+          grep -n 'CI_FONTCONFIG_WIRED' "$MF" || true
+
       - name: Fix FWGSLib
         run: |
           set +e
@@ -200,9 +321,6 @@ jobs:
           {
             echo 'include(CMakeParseArguments)'
             echo 'macro(fwgs_fix_default_msvc_settings)'
-            echo '    if(MSVC)'
-            echo '        add_compile_options(/MP /permissive-)'
-            echo '    endif()'
             echo 'endmacro()'
             echo 'function(fwgs_set_default_properties target)'
             echo '    set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)'
@@ -227,34 +345,41 @@ jobs:
           sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF"
           sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF"
 
-      - name: Wrap desktop deps
+      - name: Fix XASH_SDK and STDINT_H
         run: |
           set +e
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
+          grep -q 'xashmenu fixed include dirs' "$MF" || {
+            echo '' >> "$MF"
+            echo 'if(TARGET ${MAINUI_LIBRARY})' >> "$MF"
+            echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE' >> "$MF"
+            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../common' >> "$MF"
+            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine' >> "$MF"
+            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared' >> "$MF"
+            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../public' >> "$MF"
+            echo '    )' >> "$MF"
+            echo 'endif()' >> "$MF"
+          }
+          grep -q 'STDINT_H compile definition' "$MF" || {
+            echo '' >> "$MF"
+            echo 'if(TARGET ${MAINUI_LIBRARY})' >> "$MF"
+            echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE "STDINT_H=<cstdint>")' >> "$MF"
+            echo 'endif()' >> "$MF"
+          }
           python3 - << 'PY'
-          import re, pathlib
+          import pathlib, re
           p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
-          if not p.exists(): raise SystemExit(0)
-          lines = p.read_text().splitlines()
-          out = []
-          targets = ('fontconfig','freetype','freetype2','x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')
-          for ln in lines:
-              m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\S+)\s+(?:REQUIRED\s+|QUIET\s+|NO_CMAKE_PATH\s+)*([\w.-]+)', ln)
-              m2 = re.search(r'pkg_search_module\s*\(\s*\S+\s+\S+\s+([\w.-]+)', ln)
-              mm = m or m2
-              if mm:
-                  g = mm.groups()
-                  indent = g[0]
-                  module = (g[-1] or '').lower().split('>=')[0].split('<')[0].strip()
-                  if module in targets or any(module.startswith(t) for t in targets):
-                      out.append(f'{indent}if(NOT ANDROID)')
-                      out.append(ln)
-                      out.append(f'{indent}endif()')
-                      continue
-              out.append(ln)
-          p.write_text('\n'.join(out) + '\n')
+          s = p.read_text()
+          for old, new in [
+              (r'set\s*\(\s*XASH_SDK\s+"\.\./"\s*\)', 'set(XASH_SDK "../../")'),
+              (r'set\s*\(\s*XASH_SDK\s+\.\./\s*\)', 'set(XASH_SDK "../../")'),
+          ]:
+              s, _ = re.subn(old, new, s)
+          p.write_text(s)
           PY
 
-      - name: Fix missing sources and int64
+      - name: Fix sources int64 bruh
         run: |
           set +e
           python3 - << 'PY'
@@ -317,43 +442,7 @@ jobs:
                   if s2 != s: f.write_text(s2)
           PY
 
-      - name: Fix XASH_SDK and STDINT_H
-        run: |
-          set +e
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          test -f "$MF" || exit 0
-          grep -q 'xashmenu fixed include dirs' "$MF" || {
-            echo '' >> "$MF"
-            echo '# xashmenu fixed include dirs' >> "$MF"
-            echo 'if(TARGET ${MAINUI_LIBRARY})' >> "$MF"
-            echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../common' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared' >> "$MF"
-            echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../public' >> "$MF"
-            echo '    )' >> "$MF"
-            echo 'endif()' >> "$MF"
-          }
-          grep -q 'STDINT_H compile definition' "$MF" || {
-            echo '' >> "$MF"
-            echo '# xashmenu STDINT_H compile definition' >> "$MF"
-            echo 'if(TARGET ${MAINUI_LIBRARY})' >> "$MF"
-            echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE "STDINT_H=<cstdint>")' >> "$MF"
-            echo 'endif()' >> "$MF"
-          }
-          python3 - << 'PY'
-          import pathlib, re
-          p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
-          s = p.read_text()
-          for old, new in [
-              (r'set\s*\(\s*XASH_SDK\s+"\.\./"\s*\)', 'set(XASH_SDK "../../")'),
-              (r'set\s*\(\s*XASH_SDK\s+\.\./\s*\)', 'set(XASH_SDK "../../")'),
-          ]:
-              s, _ = re.subn(old, new, s)
-          p.write_text(s)
-          PY
-
-      - name: Fix _format macro
+      - name: Fix _format and int3
         run: |
           set +e
           PH=common/port.h
@@ -385,73 +474,6 @@ jobs:
             cat /tmp/mi_header.txt "$F" > /tmp/mi_new.h
             mv /tmp/mi_new.h "$F"
           fi
-
-      - name: Diagnose saverestore line 429
-        run: |
-          set +e
-          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
-          if [ -f "$F" ]; then
-            echo "=== line 429 ==="
-            sed -n '429p' "$F"
-            echo "=== context 424-434 ==="
-            sed -n '424,434p' "$F"
-            echo "=== uint32 casts in file ==="
-            grep -nE '\(uint32\)|reinterpret_cast<uint32|static_cast<uint32' "$F" | head -20
-          fi
-
-      - name: Force fix saverestore line 429
-        run: |
-          set +e
-          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
-          test -f "$F" || exit 0
-          python3 - << 'PY'
-          import pathlib, re
-          p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
-          lines = p.read_text().splitlines()
-          if len(lines) < 429:
-              raise SystemExit(0)
-          idx = 428
-          orig = lines[idx]
-          new = orig
-          new = new.replace('(uint32)', '(uint32)(uintptr_t)')
-          new = new.replace('reinterpret_cast<uint32>', 'reinterpret_cast<uint32>(reinterpret_cast<uintptr_t>')
-          if new != orig:
-              lines[idx] = new
-              p.write_text('\n'.join(lines) + '\n')
-              print('line 429 patched')
-              print('OLD:', orig)
-              print('NEW:', new)
-          else:
-              print('no change; raw line:', repr(orig))
-          PY
-
-      - name: Force fix all saverestore pointer casts
-        run: |
-          set +e
-          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
-          test -f "$F" || exit 0
-          python3 - << 'PY'
-          import pathlib, re
-          p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
-          s = p.read_text()
-          pats = [
-              (re.compile(r'\(uint32\)\s*\(\s*([^()]+?)\s*\)'), r'(uint32)(uintptr_t)(\1)'),
-              (re.compile(r'\(uint32\)\s*([A-Za-z_][A-Za-z0-9_]*(?:->|\.[A-Za-z_][A-Za-z0-9_]*)+)'), r'(uint32)(uintptr_t)\1'),
-              (re.compile(r'\(uint32\)\s*([A-Za-z_][A-Za-z0-9_]*)'), r'(uint32)(uintptr_t)\1'),
-          ]
-          for pat, rep in pats:
-              s = pat.sub(rep, s)
-          if 'CI_SAVERESTORE_PATCHED' not in s:
-              s = '/* CI_SAVERESTORE_PATCHED */\n' + s
-          p.write_text(s)
-          print('done')
-          PY
-          echo "=== after 424-434 ==="
-          sed -n '424,434p' "$F" || true
-
-      - name: Fix int3 and pointer casts
-        run: |
-          set +e
           python3 - << 'PY'
           import pathlib, re
           roots = ['3rdparty/ReGameDLL_CS', '3rdparty/mainui_cpp', 'dlls', 'cl_dll', 'engine', 'common']
@@ -477,21 +499,40 @@ jobs:
                   s2 = s
                   for pat, rep in pats: s2 = pat.sub(rep, s2)
                   if s2 != s: f.write_text(s2)
+          PY
 
-          root2 = pathlib.Path('3rdparty/ReGameDLL_CS')
-          if root2.exists():
-              pat_a = re.compile(r'\(uint32\)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)')
-              pat_b = re.compile(r'\(uint32\)([A-Za-z_][A-Za-z0-9_]*)')
-              for f in root2.rglob('*.cpp'):
-                  try: s = f.read_text()
-                  except: continue
-                  orig = s
-                  s = pat_a.sub(r'(uint32)(uintptr_t)(\1)', s)
-                  s = pat_b.sub(r'(uint32)(uintptr_t)\1', s)
-                  if s != orig:
-                      if 'CI_PTR_CAST_PATCHED' not in s:
-                          s = '/* CI_PTR_CAST_PATCHED */\n' + s
-                      f.write_text(s)
+      - name: Fix saverestore and version script
+        run: |
+          set +e
+          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
+          if [ -f "$F" ]; then
+            python3 - << 'PY'
+            import pathlib
+            p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
+            lines = p.read_text().splitlines()
+            if len(lines) >= 429:
+                idx = 428
+                orig = lines[idx]
+                new = orig.replace('(uint32)', '(uint32)(uintptr_t)')
+                new = new.replace('reinterpret_cast<uint32>', 'reinterpret_cast<uint32>(reinterpret_cast<uintptr_t>')
+                if new != orig:
+                    lines[idx] = new
+                    p.write_text('\n'.join(lines) + '\n')
+                    print('patched 429')
+            PY
+          fi
+          python3 - << 'PY'
+          import pathlib, re
+          root = pathlib.Path('3rdparty/ReGameDLL_CS')
+          if not root.exists(): raise SystemExit(0)
+          pat = re.compile(r'[ \t]*__gcclibcxx_demangle_callback[ \t]*;?[ \t]*\r?\n')
+          for f in root.rglob('*'):
+              if not f.is_file(): continue
+              try: s = f.read_text()
+              except: continue
+              if '__gcclibcxx_demangle_callback' in s:
+                  s2 = pat.sub('', s)
+                  if s2 != s: f.write_text(s2)
           PY
           MF=3rdparty/ReGameDLL_CS/CMakeLists.txt
           if [ -f "$MF" ] && ! grep -q 'CI_RELAX_PTR_CAST' "$MF"; then
@@ -503,240 +544,35 @@ jobs:
               echo 'add_compile_options(-Wno-error=int-conversion)'
               echo 'add_compile_options(-Wno-error=constant-conversion)'
               echo 'add_compile_options(-Wno-error=shorten-64-to-32)'
-              echo 'add_compile_options(-fpermissive)'
-            } >> "$MF"
-          fi
-
-      - name: Fix version script for arm64
-        run: |
-          set +e
-          echo "=== version script refs ==="
-          grep -rn 'version-script\|version_script' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -10
-          echo "=== __gcclibcxx refs ==="
-          grep -rn '__gcclibcxx_demangle_callback' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -10
-          echo "=== .map / .ver / .vers files ==="
-          find 3rdparty/ReGameDLL_CS -type f \( -name '*.map' -o -name '*.ver' -o -name '*.vers' -o -name '*.version' \) 2>/dev/null | head -20
-
-          python3 - << 'PY'
-          import pathlib, re
-          root = pathlib.Path('3rdparty/ReGameDLL_CS')
-          if not root.exists():
-              raise SystemExit(0)
-          pat = re.compile(r'[ \t]*__gcclibcxx_demangle_callback[ \t]*;?[ \t]*\r?\n')
-          changed = []
-          for f in root.rglob('*'):
-              if not f.is_file():
-                  continue
-              if f.suffix not in ('.map', '.ver', '.vers', '.version', '.txt', '.cmake', '.in'):
-                  try:
-                      s = f.read_text()
-                  except Exception:
-                      continue
-                  if '__gcclibcxx_demangle_callback' in s:
-                      s2 = pat.sub('', s)
-                      if s2 != s:
-                          f.write_text(s2)
-                          changed.append(str(f))
-                  continue
-              try:
-                  s = f.read_text()
-              except Exception:
-                  continue
-              if '__gcclibcxx_demangle_callback' in s:
-                  s2 = pat.sub('', s)
-                  if s2 != s:
-                      f.write_text(s2)
-                      changed.append(str(f))
-          print('removed from:', changed)
-          PY
-
-          MF=3rdparty/ReGameDLL_CS/CMakeLists.txt
-          if [ -f "$MF" ] && ! grep -q 'CI_UNDEFINED_VERSION' "$MF"; then
-            {
-              echo ''
-              echo '# CI_UNDEFINED_VERSION'
               echo 'add_link_options(-Wl,--undefined-version)'
-              echo 'add_compile_options(-Wno-error=unused-command-line-argument)'
-            } >> "$MF"
-            echo "injected undefined-version"
-          fi
-          echo "=== after ==="
-          grep -rn '__gcclibcxx_demangle_callback' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -5 || echo "OK: none"
-
-      - name: Fix fontconfig for android
-        run: |
-          set +e
-          echo "=== scan fontconfig ==="
-          grep -rn 'fontconfig' 3rdparty/mainui_cpp/ 2>/dev/null | head -20 || true
-          python3 - << 'PY'
-          import pathlib, re
-          root = pathlib.Path('3rdparty/mainui_cpp')
-          if not root.exists():
-              raise SystemExit(0)
-          changed = []
-          for f in root.rglob('*'):
-              if not f.is_file():
-                  continue
-              if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx'):
-                  continue
-              try:
-                  s = f.read_text()
-              except Exception:
-                  continue
-              orig = s
-              s = re.sub(r'^[ \t]*#\s*include\s*[<"]fontconfig/fontconfig\.h[>"][ \t]*\r?\n', '', s, flags=re.M)
-              s = re.sub(r'^[ \t]*#\s*include\s*[<"]fontconfig[>"][ \t]*\r?\n', '', s, flags=re.M)
-              if s != orig:
-                  f.write_text(s)
-                  changed.append(str(f))
-          print('include removed from:', changed)
-          PY
-          python3 - << 'PY'
-          import pathlib, re
-          root = pathlib.Path('3rdparty/mainui_cpp')
-          if not root.exists():
-              raise SystemExit(0)
-          pat = re.compile(r'\b(Fc[A-Z][A-Za-z0-9_]*)\s*\(')
-          changed = []
-          for f in root.rglob('*.cpp'):
-              try:
-                  s = f.read_text()
-              except Exception:
-                  continue
-              if not pat.search(s):
-                  continue
-              s2 = '#define CI_FONTCONFIG_STUBBED 1\n'
-              s2 += 'static inline void *FcInit(void){return 0;}\n'
-              s2 += 'static inline void *FcPatternCreate(void){return 0;}\n'
-              s2 += 'static inline void  FcPatternDestroy(void*p){(void)p;}\n'
-              s2 += 'static inline void  FcConfigSubstitute(void*a,void*b,int c){(void)a;(void)b;(void)c;}\n'
-              s2 += 'static inline void  FcDefaultSubstitute(void*a){(void)a;}\n'
-              s2 += 'static inline int   FcPatternAddString(void*a,const char*b,const unsigned char*c){(void)a;(void)b;(void)c;return 0;}\n'
-              s2 += 'static inline int   FcPatternAddInteger(void*a,const char*b,int c){(void)a;(void)b;(void)c;return 0;}\n'
-              s2 += 'static inline int   FcPatternAddDouble(void*a,const char*b,double c){(void)a;(void)b;(void)c;return 0;}\n'
-              s2 += 'static inline int   FcPatternAddBool(void*a,const char*b,int c){(void)a;(void)b;(void)c;return 0;}\n'
-              s2 += 'static inline int   FcConfigSubstituteWithPat(void*a,void*b,void*c,int d){(void)a;(void)b;(void)c;(void)d;return 0;}\n'
-              s2 += 'static inline void  FcFontSetDestroy(void*a){(void)a;}\n'
-              s2 += 'static inline void  FcCharSetDestroy(void*a){(void)a;}\n'
-              s2 = s2 + s
-              f.write_text(s2)
-              changed.append(str(f))
-          print('fontconfig stub prepended to:', changed)
-          PY
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          if [ -f "$MF" ] && ! grep -q 'CI_DISABLE_FREETYPE' "$MF"; then
-            {
-              echo ''
-              echo '# CI_DISABLE_FREETYPE'
-              echo 'if(TARGET ${MAINUI_LIBRARY})'
-              echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE MAINUI_USE_FREETYPE=0)'
-              echo 'endif()'
-            } >> "$MF"
-            echo "injected MAINUI_USE_FREETYPE=0"
-          fi
-          echo "=== after ==="
-          grep -rn 'fontconfig/fontconfig.h' 3rdparty/mainui_cpp/ 2>/dev/null | head -5 || echo "OK: none"
-
-      - name: Build expat for android
-        run: |
-          set -e
-          SYS=${{ github.workspace }}/sysroot
-          mkdir -p "$SYS"
-          cd /tmp
-          wget -q https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz -O expat.tar.gz
-          tar xzf expat.tar.gz
-          cd expat-2.5.0
-          cmake -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${TARGET_ABI} \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_INSTALL_PREFIX="$SYS" \
-            -DEXPAT_BUILD_TOOLS=OFF \
-            -DEXPAT_BUILD_EXAMPLES=OFF \
-            -DEXPAT_BUILD_TESTS=OFF \
-            -DEXPAT_BUILD_DOCS=OFF \
-            -DBUILD_SHARED_LIBS=OFF
-          cmake --build build --target install
-          ls -lh "$SYS/lib/" "$SYS/include/" || true
-
-      - name: Build freetype for android
-        run: |
-          set -e
-          SYS=${{ github.workspace }}/sysroot
-          cd /tmp
-          wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
-          tar xzf ft.tar.gz
-          cd freetype-2.13.2
-          cmake -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${TARGET_ABI} \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_INSTALL_PREFIX="$SYS" \
-            -DFT_DISABLE_HARFBUZZ=TRUE \
-            -DFT_DISABLE_BZIP2=TRUE \
-            -DFT_DISABLE_PNG=TRUE \
-            -DFT_DISABLE_BROTLI=TRUE \
-            -DBUILD_SHARED_LIBS=OFF
-          cmake --build build --target install
-          ls -lh "$SYS/lib/" | grep -i freetype || true
-
-      - name: Build fontconfig for android
-        run: |
-          set -e
-          SYS=${{ github.workspace }}/sysroot
-          cd /tmp
-          wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
-          tar xzf fc.tar.gz
-          cd fontconfig-2.14.2
-          cmake -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${TARGET_ABI} \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_INSTALL_PREFIX="$SYS" \
-            -DCMAKE_PREFIX_PATH="$SYS" \
-            -DCMAKE_FIND_ROOT_PATH="$SYS" \
-            -DEXPAT_LIBRARY="$SYS/lib/libexpat.a" \
-            -DEXPAT_INCLUDE_DIR="$SYS/include" \
-            -DFREETYPE_LIBRARY="$SYS/lib/libfreetype.a" \
-            -DFREETYPE_INCLUDE_DIRS="$SYS/include/freetype2;$SYS/include" \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DENABLE_DOCS=OFF \
-            -DENABLE_NLS=OFF \
-            -DENABLE_TESTS=OFF
-          cmake --build build --target install
-          ls -lh "$SYS/lib/" | grep -i fontconfig || true
-          find "$SYS/include" -name 'fontconfig.h' || true
-
-      - name: Wire fontconfig into xashmenu
-        run: |
-          set +e
-          SYS=${{ github.workspace }}/sysroot
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          test -f "$MF" || exit 0
-          if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
-            {
-              echo ''
-              echo '# CI_FONTCONFIG_WIRED'
-              echo 'if(TARGET ${MAINUI_LIBRARY})'
-              echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE "'"$SYS"'/include" "'"$SYS"'/include/freetype2")'
-              echo '    target_link_libraries(${MAINUI_LIBRARY} PRIVATE'
-              echo '        "'"$SYS"'/lib/libfontconfig.a"'
-              echo '        "'"$SYS"'/lib/libfreetype.a"'
-              echo '        "'"$SYS"'/lib/libexpat.a"'
-              echo '        z)'
-              echo 'endif()'
             } >> "$MF"
           fi
-          echo "=== fontconfig.h location ==="
-          find "$SYS" -name 'fontconfig.h' 2>/dev/null | head -3
-          echo "=== libs ==="
-          ls "$SYS/lib/"*.a 2>/dev/null | head -10
-
-      - name: Inject engine libs
-        run: |
-          DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
-          mkdir -p "$DEST"
-          cp -v engine-libs/*.so "$DEST/"
+          MF2=3rdparty/mainui_cpp/CMakeLists.txt
+          if [ -f "$MF2" ] && ! grep -q 'CI_DESKTOP_WRAP' "$MF2"; then
+            python3 - << 'PY'
+            import re, pathlib
+            p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
+            lines = p.read_text().splitlines()
+            out = []
+            targets = ('fontconfig','freetype','freetype2','x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')
+            for ln in lines:
+                m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\S+)\s+(?:REQUIRED\s+|QUIET\s+|NO_CMAKE_PATH\s+)*([\w.-]+)', ln)
+                if m:
+                    indent, module = m.group(1), m.group(3).lower().split('>=')[0].split('<')[0].strip()
+                    if module in targets or any(module.startswith(t) for t in targets):
+                        out.append(f'{indent}if(NOT ANDROID)')
+                        out.append(ln)
+                        out.append(f'{indent}endif()')
+                        continue
+                out.append(ln)
+            p.write_text('\n'.join(out) + '\n')
+            PY
+          fi
+          cp -v engine-libs/*.so android/app/src/main/jniLibs/${TARGET_ABI}/ 2>/dev/null || {
+            DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
+            mkdir -p "$DEST"
+            cp -v engine-libs/*.so "$DEST/"
+          }
 
       - name: Set app name
         run: |
@@ -756,8 +592,7 @@ jobs:
           if mf.exists():
               s = mf.read_text()
               if 'android:label="@string/app_name"' not in s:
-                  s = re.sub(r'android:label="[^"]*"',
-                             'android:label="Counter Strike 1.6"', s)
+                  s = re.sub(r'android:label="[^"]*"', 'android:label="Counter Strike 1.6"', s)
                   mf.write_text(s)
           PY
 
@@ -782,7 +617,6 @@ jobs:
           LOG=/tmp/build_apk.log
           OUT=/tmp/errors/errors.txt
           {
-            echo "=== workflow: ${{ github.workflow }} ==="
             echo "=== run_id: ${{ github.run_id }} ==="
             echo "=== commit: ${{ github.sha }} ==="
             echo "=== timestamp: $(date -u +%FT%TZ) ==="
@@ -794,20 +628,14 @@ jobs:
             cat "$OUT"
             exit 0
           fi
-          FILTER='force_align_arg_pointer|unknown-attributes|Wunknown-attributes|Wdeprecated-declarations|overrides a member function|no previous prototype|Wunused|Wsign-compare|Wshadow|Wformat|declared here|note: expanded|in file included from|^note:|Wmissing-braces|Wpragma-pack|Wdivision-by-zero|Wswitch|Wparentheses|Wtautological|Wbitwise|Wsometimes-uninitialized'
+          FILTER='force_align_arg_pointer|unknown-attributes|Wunknown-attributes|Wdeprecated-declarations|overrides a member function|no previous prototype|Wunused|Wsign-compare|Wshadow|Wformat|declared here|note: expanded|in file included from|^note:|Wmissing-braces|Wpragma-pack|Wdivision-by-zero|Wswitch|Wparentheses|Wtautological|Wbitwise|Wsometimes-uninitialized|Wmacro-redefined|previous definition is here'
           grep -nE "error:|fatal error:|FAILED:|FAILURE:|undefined reference|ninja: build stopped|What went wrong|Execution failed|Caused by:|ld: |cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file" "$LOG" \
-            | grep -vE "$FILTER" \
-            | head -200 >> "$OUT" || true
+            | grep -vE "$FILTER" | head -200 >> "$OUT" || true
           {
             echo ""
-            echo "=== TAIL (last 60, cleaned) ==="
+            echo "=== TAIL (last 60) ==="
           } >> "$OUT"
           tail -60 "$LOG" | grep -vE "$FILTER" >> "$OUT" || true
-          {
-            echo ""
-            echo "=== FILES WITH ERRORS ==="
-          } >> "$OUT"
-          grep -oE '/[^ ]+\.(cpp|cc|cxx|h|hpp)' "$LOG" | sort -u | head -40 >> "$OUT" || true
           wc -l "$OUT"
           cat "$OUT"
 
