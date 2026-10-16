@@ -157,34 +157,20 @@ jobs:
           cd /tmp/xash
           git sparse-checkout set android/app/src/main/java android/app/src/main/res android/app/src/main/assets
           cd $GITHUB_WORKSPACE
-
-          DEST=android/app/src/main/java
-          mkdir -p "$DEST/su/xash"
           if [ -d /tmp/xash/android/app/src/main/java/su/xash/engine ]; then
-            cp -rv /tmp/xash/android/app/src/main/java/su/xash/engine "$DEST/su/xash/"
+            find /tmp/xash/android/app/src/main/java/su/xash/engine -type d | head -20
+            find /tmp/xash/android/app/src/main/java/su/xash/engine -name '*.java' | wc -l
           fi
-
-          if [ -d /tmp/xash/android/app/src/main/res ]; then
-            mkdir -p android/app/src/main/res
-            cp -rn /tmp/xash/android/app/src/main/res/* android/app/src/main/res/ 2>/dev/null || true
-          fi
-
-          if [ -d /tmp/xash/android/app/src/main/assets ]; then
-            mkdir -p android/app/src/main/assets
-            cp -rn /tmp/xash/android/app/src/main/assets/* android/app/src/main/assets/ 2>/dev/null || true
-          fi
-
           rm -rf /tmp/SDL2
           git clone --depth 1 --branch release-2.30.x https://github.com/libsdl-org/SDL.git /tmp/SDL2
-          mkdir -p "$DEST/org"
+          mkdir -p android/app/src/main/java/org
           if [ -d /tmp/SDL2/android-project/app/src/main/java/org/libsdl ]; then
-            cp -rv /tmp/SDL2/android-project/app/src/main/java/org/libsdl "$DEST/org/"
+            cp -rv /tmp/SDL2/android-project/app/src/main/java/org/libsdl android/app/src/main/java/org/
           fi
-
           python3 ci-scripts/integrate_engine.py
-
           echo "=== Java layer final ==="
-          find android/app/src/main/java -name '*.java'
+          find android/app/src/main/java -name '*.java' | wc -l
+          find android/app/src/main/java/su/xash/engine -name '*.java' | head -30
 
       - name: Force mainui_cpp to cs16-client branch
         run: |

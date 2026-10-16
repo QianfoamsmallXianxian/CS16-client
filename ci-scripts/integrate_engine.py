@@ -92,6 +92,30 @@ public class CZeroActivity extends Activity {
 ''')
 print("MainActivity/CZeroActivity written")
 
+xash_java = XASH / 'java'
+xash_engine_src = xash_java / 'su' / 'xash' / 'engine'
+xash_engine_dst = JAVA / 'su' / 'xash' / 'engine'
+if xash_engine_src.exists():
+    if xash_engine_dst.exists():
+        shutil.rmtree(xash_engine_dst)
+    xash_engine_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(xash_engine_src, xash_engine_dst)
+    n = sum(1 for _ in xash_engine_dst.rglob('*.java'))
+    print("copied su/xash/engine tree: " + str(n) + " java files")
+else:
+    print("WARN: " + str(xash_engine_src) + " not found")
+if xash_java.exists():
+    for f in xash_java.rglob('*.java'):
+        rel = f.relative_to(xash_java)
+        rel_str = str(rel)
+        if rel_str.startswith('su/xash/engine/'):
+            continue
+        if rel_str.startswith('su/xash/cs16client/'):
+            continue
+        dst = JAVA / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dst)
+        print("copied java: " + rel_str)
 patched_java = 0
 for f in glob.glob(str(JAVA / 'su/xash/engine/**/*.java'), recursive=True):
     p = pathlib.Path(f)
@@ -108,18 +132,6 @@ for f in glob.glob(str(JAVA / 'su/xash/engine/**/*.java'), recursive=True):
         p.write_text(s)
         patched_java += 1
 print("patched java R refs: " + str(patched_java))
-
-xash_java = XASH / 'java'
-if xash_java.exists():
-    for pkg_dir in xash_java.rglob('*.java'):
-        rel = pkg_dir.relative_to(xash_java)
-        if str(rel).startswith('su/xash/engine/'):
-            continue
-        dst = JAVA / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(pkg_dir, dst)
-        print("copied java: " + str(rel))
-
 strings_target = RES / 'values' / 'strings.xml'
 strings_source = XASH / 'res' / 'values' / 'strings.xml'
 n = merge_values_into(strings_target, strings_source, 'string')
