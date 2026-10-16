@@ -193,14 +193,21 @@ jobs:
           wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
           tar xzf fc.tar.gz
           cd fontconfig-2.14.2
-          export PKG_CONFIG_PATH="$SYS/lib/pkgconfig:$SYS/share/pkgconfig"
+          ls "$SYS/lib/pkgconfig/" || true
+          cat "$SYS/lib/pkgconfig/freetype2.pc" 2>/dev/null || echo "no freetype2.pc"
+          export PKG_CONFIG_PATH="$SYS/lib/pkgconfig"
           export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
-          export PKG_CONFIG_SYSROOT_DIR="$SYS"
-          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled
+          unset PKG_CONFIG_SYSROOT_DIR
+          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled || {
+            echo "=== meson-log ==="
+            cat build/meson-logs/meson-log.txt 2>/dev/null | tail -80
+            exit 1
+          }
           ninja -C build
           ninja -C build install
           ls "$SYS/lib/" | grep -i fontconfig || true
           find "$SYS/include" -name 'fontconfig.h' || true
+          cat "$SYS/lib/pkgconfig/fontconfig.pc" 2>/dev/null || true
 
       - name: Wire fontconfig
         run: |
@@ -290,6 +297,8 @@ jobs:
           ANDROID_HOME: ${{ github.workspace }}/sdk
           ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
           JAVA_HOME: ${{ github.workspace }}/java
+          PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/lib/pkgconfig:${{ github.workspace }}/sysroot/share/pkgconfig
+          PKG_CONFIG_LIBDIR: ${{ github.workspace }}/sysroot/lib/pkgconfig
         run: |
           chmod +x gradlew
           set -o pipefail
