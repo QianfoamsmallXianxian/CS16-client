@@ -637,6 +637,101 @@ jobs:
           echo "=== after ==="
           grep -rn 'fontconfig/fontconfig.h' 3rdparty/mainui_cpp/ 2>/dev/null | head -5 || echo "OK: none"
 
+      - name: Build expat for android
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          mkdir -p "$SYS"
+          cd /tmp
+          wget -q https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz -O expat.tar.gz
+          tar xzf expat.tar.gz
+          cd expat-2.5.0
+          cmake -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${TARGET_ABI} \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_INSTALL_PREFIX="$SYS" \
+            -DEXPAT_BUILD_TOOLS=OFF \
+            -DEXPAT_BUILD_EXAMPLES=OFF \
+            -DEXPAT_BUILD_TESTS=OFF \
+            -DEXPAT_BUILD_DOCS=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --target install
+          ls -lh "$SYS/lib/" "$SYS/include/" || true
+
+      - name: Build freetype for android
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          cd /tmp
+          wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
+          tar xzf ft.tar.gz
+          cd freetype-2.13.2
+          cmake -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${TARGET_ABI} \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_INSTALL_PREFIX="$SYS" \
+            -DFT_DISABLE_HARFBUZZ=TRUE \
+            -DFT_DISABLE_BZIP2=TRUE \
+            -DFT_DISABLE_PNG=TRUE \
+            -DFT_DISABLE_BROTLI=TRUE \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --target install
+          ls -lh "$SYS/lib/" | grep -i freetype || true
+
+      - name: Build fontconfig for android
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          cd /tmp
+          wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
+          tar xzf fc.tar.gz
+          cd fontconfig-2.14.2
+          cmake -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${TARGET_ABI} \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_INSTALL_PREFIX="$SYS" \
+            -DCMAKE_PREFIX_PATH="$SYS" \
+            -DCMAKE_FIND_ROOT_PATH="$SYS" \
+            -DEXPAT_LIBRARY="$SYS/lib/libexpat.a" \
+            -DEXPAT_INCLUDE_DIR="$SYS/include" \
+            -DFREETYPE_LIBRARY="$SYS/lib/libfreetype.a" \
+            -DFREETYPE_INCLUDE_DIRS="$SYS/include/freetype2;$SYS/include" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DENABLE_DOCS=OFF \
+            -DENABLE_NLS=OFF \
+            -DENABLE_TESTS=OFF
+          cmake --build build --target install
+          ls -lh "$SYS/lib/" | grep -i fontconfig || true
+          find "$SYS/include" -name 'fontconfig.h' || true
+
+      - name: Wire fontconfig into xashmenu
+        run: |
+          set +e
+          SYS=${{ github.workspace }}/sysroot
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
+          if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
+            {
+              echo ''
+              echo '# CI_FONTCONFIG_WIRED'
+              echo 'if(TARGET ${MAINUI_LIBRARY})'
+              echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE "'"$SYS"'/include" "'"$SYS"'/include/freetype2")'
+              echo '    target_link_libraries(${MAINUI_LIBRARY} PRIVATE'
+              echo '        "'"$SYS"'/lib/libfontconfig.a"'
+              echo '        "'"$SYS"'/lib/libfreetype.a"'
+              echo '        "'"$SYS"'/lib/libexpat.a"'
+              echo '        z)'
+              echo 'endif()'
+            } >> "$MF"
+          fi
+          echo "=== fontconfig.h location ==="
+          find "$SYS" -name 'fontconfig.h' 2>/dev/null | head -3
+          echo "=== libs ==="
+          ls "$SYS/lib/"*.a 2>/dev/null | head -10
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
