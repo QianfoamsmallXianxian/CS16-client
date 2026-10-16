@@ -186,6 +186,28 @@ jobs:
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
 
+      - name: Disable mainui_cpp build
+        run: |
+          set -euo pipefail
+          F=CMakeLists.txt
+          test -f "$F" || { echo "no CMakeLists"; exit 1; }
+          echo "=== 原始 option 行 ==="
+          grep -nE 'option\(BUILD_MAINUI|add_subdirectory\(3rdparty/mainui_cpp' "$F" || true
+          python3 - << 'PY'
+          import re, pathlib
+          p = pathlib.Path('CMakeLists.txt')
+          s = p.read_text()
+          s = re.sub(r'option\(BUILD_MAINUI\s+"[^"]*"\s+ON\)',
+                     'option(BUILD_MAINUI "Build menu library." OFF)', s)
+          s = re.sub(r'option\(BUILD_MAINUI\s+"[^"]*"\s+TRUE\)',
+                     'option(BUILD_MAINUI "Build menu library." OFF)', s)
+          s = re.sub(r'option\(BUILD_MAINUI\s+"[^"]*"\s+1\)',
+                     'option(BUILD_MAINUI "Build menu library." OFF)', s)
+          p.write_text(s)
+          PY
+          echo "=== 修改后 ==="
+          grep -nE 'option\(BUILD_MAINUI' "$F" || true
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
@@ -222,8 +244,8 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon tasks --all 2>&1 | grep -iE '^assemble|^bundle' | head -40 || true
 
-      - name: Build continuous
-        id: build_cont
+      - name: Build GitDebug
+        id: build_gitdebug
         continue-on-error: true
         working-directory: android
         env:
@@ -231,10 +253,10 @@ jobs:
           ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
           JAVA_HOME: ${{ github.workspace }}/java
         run: |
-          ./gradlew --no-daemon --stacktrace assembleGitContinuous
+          ./gradlew --no-daemon --stacktrace assembleGitDebug
 
       - name: Build fallback
-        if: steps.build_cont.outcome == 'failure'
+        if: steps.build_gitdebug.outcome == 'failure'
         working-directory: android
         env:
           ANDROID_HOME: ${{ github.workspace }}/sdk
