@@ -260,6 +260,16 @@ jobs:
             printf '\n# CI_RELAX_PTR_CAST\nadd_compile_options(-Wno-error=int-to-pointer-cast)\nadd_compile_options(-Wno-error=pointer-to-int-cast)\nadd_compile_options(-Wno-error=int-conversion)\nadd_compile_options(-Wno-error=constant-conversion)\nadd_compile_options(-Wno-error=shorten-64-to-32)\nadd_link_options(-Wl,--undefined-version)\n' >> "$MF"
           fi
 
+      - name: Patch pkg-config absolute paths
+        env:
+          SYS: ${{ github.workspace }}/sysroot
+        run: python3 ci-scripts/patch_pc.py
+
+      - name: Prepend link_directories to mainui
+        env:
+          SYS: ${{ github.workspace }}/sysroot
+        run: python3 ci-scripts/prepend_linkdirs.py
+
       - name: Fix xashmenu link deps
         run: |
           MF=3rdparty/mainui_cpp/CMakeLists.txt
