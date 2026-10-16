@@ -214,9 +214,6 @@ jobs:
           sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF"
           sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF"
 
-      - name: Wrap desktop deps
-        run: python3 ci-scripts/wrap_desktop.py
-
       - name: Fix XASH_SDK and STDINT_H
         run: |
           MF=3rdparty/mainui_cpp/CMakeLists.txt
@@ -301,6 +298,16 @@ jobs:
 
       - name: Set app name
         run: python3 ci-scripts/set_app_name.py
+
+      - name: Wrap all pkg_check_modules deep
+        run: |
+          set +e
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          grep -n 'pkg_check_modules' "$MF"
+          sed -n '170,195p' "$MF"
+          python3 ci-scripts/wrap_all_pkg.py
+          grep -n -B1 -A1 'pkg_check_modules' "$MF"
+          grep -n 'REQUIRED' "$MF" | head -20
 
       - name: Build APK
         id: build_apk
