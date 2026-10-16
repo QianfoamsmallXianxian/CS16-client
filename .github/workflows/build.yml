@@ -490,6 +490,34 @@ jobs:
             echo "common/port.h not found"
           fi
 
+      - name: Inject _format fallback into menu_int.h
+        run: |
+          set +e
+          python3 - << 'PY'
+          import pathlib
+          p = pathlib.Path('engine/menu_int.h')
+          if not p.exists():
+              print('menu_int.h not found')
+              raise SystemExit(0)
+          s = p.read_text()
+          if '_format_fallback_injected' in s:
+              print('already injected')
+              raise SystemExit(0)
+          header = """/* CI _format_fallback_injected */
+#ifndef _format
+# if defined(__GNUC__)
+#  define _format(x) __attribute__((format(printf,x,x+1)))
+# else
+#  define _format(x)
+# endif
+#endif
+"""
+          p.write_text(header + s)
+          print('injected _format fallback')
+          PY
+          grep -n '_format_fallback_injected' engine/menu_int.h || true
+          sed -n '1,15p' engine/menu_int.h || true
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
