@@ -156,21 +156,7 @@ jobs:
         run: |
           NDK="$ANDROID_NDK_HOME"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          cat > /tmp/android-arm64.ini << INI_EOF
-[binaries]
-c = '$BIN/aarch64-linux-android21-clang'
-cpp = '$BIN/aarch64-linux-android21-clang++'
-ar = '$BIN/llvm-ar'
-strip = '$BIN/llvm-strip'
-pkg-config = '/usr/bin/pkg-config'
-[host_machine]
-system = 'android'
-cpu_family = 'aarch64'
-cpu = 'aarch64'
-endian = 'little'
-[properties]
-needs_exe_wrapper = true
-INI_EOF
+          printf '[binaries]\nc = \'%s/aarch64-linux-android21-clang\'\ncpp = \'%s/aarch64-linux-android21-clang++\'\nar = \'%s/llvm-ar\'\nstrip = \'%s/llvm-strip\'\npkg-config = \'/usr/bin/pkg-config\'\n[host_machine]\nsystem = \'android\'\ncpu_family = \'aarch64\'\ncpu = \'aarch64\'\nendian = \'little\'\n[properties]\nneeds_exe_wrapper = true\n' "$BIN" "$BIN" "$BIN" "$BIN" > /tmp/android-arm64.ini
           cat /tmp/android-arm64.ini
 
       - name: Build expat
