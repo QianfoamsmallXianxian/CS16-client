@@ -280,9 +280,7 @@ jobs:
       - name: Fix mainui sources
         run: |
           set +e
-          echo "=== grep Color.cpp ==="
           grep -rn 'Color\.cpp' 3rdparty/mainui_cpp/ || true
-          echo "=== color files ==="
           find 3rdparty/mainui_cpp -iname '*color*' || true
           python3 - << 'PY'
           import pathlib, re
@@ -316,12 +314,9 @@ jobs:
               if new != text:
                   cm.write_text(new)
                   changed.append(str(cm))
-          print("=== changed ===")
-          for f in changed: print("  ", f)
-          print("=== renamed ===")
-          for cm, a, b in renamed: print(f"   {cm}: {a} -> {b}")
-          print("=== removed ===")
-          for cm, rel in removed: print(f"   {cm}: {rel}")
+          print("changed:", changed)
+          print("renamed:", renamed)
+          print("removed:", removed)
           PY
           grep -rn 'Color\.cpp' 3rdparty/mainui_cpp/ || echo "OK: none"
 
@@ -360,15 +355,12 @@ jobs:
               else:
                   print('archtypes.h already has guard')
           PY
-          echo "=== miniutl.h ==="
           grep -n -B1 -A1 'int64\|uint64' 3rdparty/mainui_cpp/miniutl/miniutl.h 2>/dev/null | head -20 || true
-          echo "=== archtypes.h ==="
           grep -n -B1 -A1 'int64\|uint64' engine/archtypes.h 2>/dev/null | head -20 || true
 
       - name: Remove uint64_bruh hacks
         run: |
           set +e
-          echo "=== scan uint64_bruh ==="
           grep -rn 'uint64_bruh' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || true
           python3 - << 'PY'
           import pathlib, re
@@ -399,11 +391,8 @@ jobs:
                   if s2 != s:
                       f.write_text(s2)
                       changed.append(str(f))
-          print("=== changed ===")
-          for f in changed:
-              print("  ", f)
+          print("changed:", changed)
           PY
-          echo "=== after ==="
           grep -rn 'uint64_bruh\|int64_bruh\|#define uint64\|#define int64\|#undef uint64\|#undef int64' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || echo "OK: none"
           sed -n '30,60p' cl_dll/vgui_parser.cpp || true
 
@@ -413,49 +402,93 @@ jobs:
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || { echo "no mainui CMakeLists"; exit 0; }
           grep -n 'XASH_SDK' "$MF" || true
-          grep -n 'include_directories\|target_include_directories' "$MF" | head -20 || true
-          cat > /tmp/xashmenu_include.txt << 'TXTEOF'
-          if(TARGET ${MAINUI_LIBRARY})
-              target_include_directories(${MAINUI_LIBRARY} PRIVATE
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../common
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../public
-              )
-          else()
-              include_directories(
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../common
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../engine
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared
-                  ${CMAKE_CURRENT_SOURCE_DIR}/../../public
-              )
-          endif()
-          TXTEOF
+          if grep -q 'xashmenu fixed include dirs' "$MF"; then
+            echo "already injected include dirs"
+          else
+            {
+              echo ''
+              echo '# xashmenu fixed include dirs (injected by CI)'
+              echo 'if(TARGET ${MAINUI_LIBRARY})'
+              echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../common'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../public'
+              echo '    )'
+              echo 'else()'
+              echo '    include_directories('
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../common'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../engine'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../pm_shared'
+              echo '        ${CMAKE_CURRENT_SOURCE_DIR}/../../public'
+              echo '    )'
+              echo 'endif()'
+            } >> "$MF"
+            echo "injected include dirs"
+          fi
           python3 - << 'PY'
           import pathlib, re
           p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
           s = p.read_text()
-          pats = [
+          for old, new in [
               (r'set\s*\(\s*XASH_SDK\s+"\.\./"\s*\)', 'set(XASH_SDK "../../")'),
               (r'set\s*\(\s*XASH_SDK\s+\.\./\s*\)', 'set(XASH_SDK "../../")'),
               (r'set\s*\(\s*XASH_SDK\s+"\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./"\s*\)',
                'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
               (r'set\s*\(\s*XASH_SDK\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./\s*\)',
                'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
-          ]
-          for old, new in pats:
+          ]:
               s, n = re.subn(old, new, s)
               if n:
-                  print("pattern hit:", n)
-          if 'xashmenu fixed include dirs' not in s:
-              extra = pathlib.Path('/tmp/xashmenu_include.txt').read_text()
-              extra = '\n# xashmenu fixed include dirs\n' + extra
-              s = s + extra
-              print("injected include dirs")
+                  print("XASH_SDK pattern hit:", n)
           p.write_text(s)
           PY
           grep -n 'XASH_SDK\|xashmenu fixed include' "$MF" || true
           find . -name 'xash3d_types.h' -not -path '*/3rdparty/mainui_cpp/3rdparty/*' 2>/dev/null | head -5
+
+      - name: Add STDINT_H for xashmenu
+        run: |
+          set +e
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
+          if grep -q 'STDINT_H compile definition' "$MF"; then
+            echo "already injected"
+          else
+            {
+              echo ''
+              echo '# xashmenu STDINT_H compile definition (injected by CI)'
+              echo 'if(TARGET ${MAINUI_LIBRARY})'
+              echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE "STDINT_H=<cstdint>")'
+              echo 'endif()'
+            } >> "$MF"
+            echo "injected STDINT_H"
+          fi
+          grep -n 'STDINT_H' "$MF" || true
+
+      - name: Ensure _format macro
+        run: |
+          set +e
+          PH=common/port.h
+          if [ -f "$PH" ]; then
+            if grep -q 'define[[:space:]]*_format' "$PH"; then
+              echo "port.h already has _format"
+            else
+              {
+                echo ''
+                echo '#ifndef _format'
+                echo '#if defined(__GNUC__)'
+                echo '#define _format(x) __attribute__((format(printf,x,x+1)))'
+                echo '#else'
+                echo '#define _format(x)'
+                echo '#endif'
+                echo '#endif'
+              } >> "$PH"
+              echo "injected _format into port.h"
+            fi
+            grep -n '_format' "$PH" | head -5
+          else
+            echo "common/port.h not found"
+          fi
 
       - name: Inject engine libs
         run: |
