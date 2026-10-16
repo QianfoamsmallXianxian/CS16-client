@@ -13,19 +13,12 @@ pats = [
 ]
 for root in roots:
     r = pathlib.Path(root)
-    if not r.exists():
-        continue
+    if not r.exists(): continue
     for f in r.rglob('*'):
-        if not f.is_file():
-            continue
-        if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx','.inl'):
-            continue
-        try:
-            s = f.read_text()
-        except Exception:
-            continue
+        if not f.is_file(): continue
+        if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx','.inl'): continue
+        try: s = f.read_text()
+        except Exception: continue
         s2 = s
-        for pat, rep in pats:
-            s2 = pat.sub(rep, s2)
-        if s2 != s:
-            f.write_text(s2)
+        for pat, rep in pats: s2 = pat.sub(rep, s2)
+        if s2 != s: f.write_text(s2)

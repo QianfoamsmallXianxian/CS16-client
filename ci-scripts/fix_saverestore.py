@@ -14,13 +14,9 @@ root = pathlib.Path('3rdparty/ReGameDLL_CS')
 if root.exists():
     pat = re.compile(r'[ \t]*__gcclibcxx_demangle_callback[ \t]*;?[ \t]*\r?\n')
     for f in root.rglob('*'):
-        if not f.is_file():
-            continue
-        try:
-            s = f.read_text()
-        except Exception:
-            continue
+        if not f.is_file(): continue
+        try: s = f.read_text()
+        except Exception: continue
         if '__gcclibcxx_demangle_callback' in s:
             s2 = pat.sub('', s)
-            if s2 != s:
-                f.write_text(s2)
+            if s2 != s: f.write_text(s2)

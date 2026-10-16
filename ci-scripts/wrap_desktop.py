@@ -1,7 +1,6 @@
 import re, pathlib
 p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
-if not p.exists():
-    raise SystemExit(0)
+if not p.exists(): raise SystemExit(0)
 lines = p.read_text().splitlines()
 out = []
 targets = ('x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')

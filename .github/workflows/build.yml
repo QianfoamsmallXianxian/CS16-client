@@ -144,6 +144,43 @@ jobs:
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
           "$SDKMGR" --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" "cmake;${ANDROID_CMAKE}" || true
 
+      - name: Integrate engine Java layer
+        run: |
+          set +e
+          rm -rf /tmp/xash
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/FWGS/xash3d-fwgs /tmp/xash
+          cd /tmp/xash
+          git sparse-checkout set android/app/src/main/java android/app/src/main/res android/app/src/main/assets
+          cd $GITHUB_WORKSPACE
+
+          DEST=android/app/src/main/java
+          mkdir -p "$DEST/su/xash"
+          if [ -d /tmp/xash/android/app/src/main/java/su/xash/engine ]; then
+            cp -rv /tmp/xash/android/app/src/main/java/su/xash/engine "$DEST/su/xash/"
+          fi
+
+          if [ -d /tmp/xash/android/app/src/main/res ]; then
+            mkdir -p android/app/src/main/res
+            cp -rn /tmp/xash/android/app/src/main/res/* android/app/src/main/res/ 2>/dev/null || true
+          fi
+
+          if [ -d /tmp/xash/android/app/src/main/assets ]; then
+            mkdir -p android/app/src/main/assets
+            cp -rn /tmp/xash/android/app/src/main/assets/* android/app/src/main/assets/ 2>/dev/null || true
+          fi
+
+          rm -rf /tmp/SDL2
+          git clone --depth 1 --branch release-2.30.x https://github.com/libsdl-org/SDL.git /tmp/SDL2
+          mkdir -p "$DEST/org"
+          if [ -d /tmp/SDL2/android-project/app/src/main/java/org/libsdl ]; then
+            cp -rv /tmp/SDL2/android-project/app/src/main/java/org/libsdl "$DEST/org/"
+          fi
+
+          python3 ci-scripts/integrate_engine.py
+
+          echo "=== Java layer final ==="
+          find android/app/src/main/java -name '*.java'
+
       - name: Force mainui_cpp to cs16-client branch
         run: |
           set +e
@@ -155,6 +192,7 @@ jobs:
           for f in menus/client/JoinGame.cpp menus/client/JoinClass.cpp menus/client/ClientWindow.cpp; do
             [ -f "$f" ] && echo "OK: $f" || echo "MISSING: $f"
           done
+          cd $GITHUB_WORKSPACE
 
       - name: Prepare SDL
         run: |
@@ -182,7 +220,6 @@ jobs:
           cd expat-2.5.0
           cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF
           cmake --build build --target install
-          ls -lh "$SYS/lib/" || true
 
       - name: Build freetype
         run: |
@@ -194,7 +231,6 @@ jobs:
           cd freetype-2.13.2
           cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DFT_DISABLE_HARFBUZZ=TRUE -DFT_DISABLE_BZIP2=TRUE -DFT_DISABLE_PNG=TRUE -DFT_DISABLE_BROTLI=TRUE -DFT_DISABLE_ZLIB=TRUE -DBUILD_SHARED_LIBS=OFF
           cmake --build build --target install
-          ls -lh "$SYS/lib/" | grep -i freetype || true
 
       - name: Build fontconfig
         run: |
@@ -204,18 +240,35 @@ jobs:
           wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
           tar xzf fc.tar.gz
           cd fontconfig-2.14.2
-          ls "$SYS/lib/pkgconfig/" || true
           export PKG_CONFIG_PATH="$SYS/lib/pkgconfig"
           export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
           unset PKG_CONFIG_SYSROOT_DIR
           meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled || {
-            echo "=== meson-log ==="
             cat build/meson-logs/meson-log.txt 2>/dev/null | tail -80
             exit 1
           }
           ninja -C build
           ninja -C build install
-          ls "$SYS/lib/" | grep -i fontconfig || true
+
+      - name: Patch pc absolute paths
+        env:
+          SYS: ${{ github.workspace }}/sysroot
+        run: python3 ci-scripts/patch_pc.py
+
+      - name: Prepend link_directories
+        env:
+          SYS: ${{ github.workspace }}/sysroot
+        run: python3 ci-scripts/prepend_linkdirs.py
+
+      - name: Copy sysroot libs to NDK
+        run: |
+          SYS=${{ github.workspace }}/sysroot
+          NDK_SYS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          DEST_LIB="$NDK_SYS/usr/lib/aarch64-linux-android"
+          DEST_INC="$NDK_SYS/usr/include"
+          mkdir -p "$DEST_LIB" "$DEST_INC"
+          cp -v "$SYS"/lib/*.a "$DEST_LIB/" 2>/dev/null || true
+          cp -rv "$SYS"/include/* "$DEST_INC/" 2>/dev/null || true
 
       - name: Wire fontconfig
         run: |
@@ -272,26 +325,17 @@ jobs:
             printf '\n# CI_RELAX_PTR_CAST\nadd_compile_options(-Wno-error=int-to-pointer-cast)\nadd_compile_options(-Wno-error=pointer-to-int-cast)\nadd_compile_options(-Wno-error=int-conversion)\nadd_compile_options(-Wno-error=constant-conversion)\nadd_compile_options(-Wno-error=shorten-64-to-32)\nadd_link_options(-Wl,--undefined-version)\n' >> "$MF"
           fi
 
-      - name: Patch pkg-config absolute paths
-        env:
-          SYS: ${{ github.workspace }}/sysroot
-        run: python3 ci-scripts/patch_pc.py
-
-      - name: Prepend link_directories to mainui
-        env:
-          SYS: ${{ github.workspace }}/sysroot
-        run: python3 ci-scripts/prepend_linkdirs.py
-
       - name: Fix xashmenu link deps
         run: |
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
+          SYS=${{ github.workspace }}/sysroot
           if grep -q 'CI_XASHMENU_LINKS' "$MF"; then
             exit 0
           fi
-          printf '\n# CI_XASHMENU_LINKS\nforeach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64)\n    if(TARGET ${_tgt})\n        target_link_libraries(${_tgt} PRIVATE z)\n    endif()\nendforeach()\n' >> "$MF"
+          printf '\n# CI_XASHMENU_LINKS\nforeach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64)\n    if(TARGET ${_tgt})\n        target_link_libraries(${_tgt} PRIVATE z)\n        target_link_directories(${_tgt} PRIVATE "%s/lib")\n        target_include_directories(${_tgt} PRIVATE "%s/include" "%s/include/freetype2")\n    endif()\nendforeach()\n' "$SYS" "$SYS" "$SYS" >> "$MF"
 
-      - name: Restrict ABI and clean x86 libs
+      - name: Restrict ABI and clean x86
         run: |
           find 3rdparty/ReGameDLL_CS -path '*linux32*' -name '*.so' -exec rm -v {} \; 2>/dev/null || true
           find 3rdparty/ReGameDLL_CS -path '*linux64*' -name '*.so' -exec rm -v {} \; 2>/dev/null || true
@@ -303,54 +347,21 @@ jobs:
             sed -i 's/abiFilters[^}]*/abiFilters "arm64-v8a"/' "$F" || true
             grep -n 'abiFilters' "$F" || true
           fi
-
-      - name: Copy sysroot libs to NDK toolchain
-        run: |
-          set +e
-          SYS=${{ github.workspace }}/sysroot
-          NDK_SYS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          DEST_LIB="$NDK_SYS/usr/lib/aarch64-linux-android"
-          DEST_INC="$NDK_SYS/usr/include"
-          mkdir -p "$DEST_LIB" "$DEST_INC"
-          cp -v "$SYS"/lib/*.a "$DEST_LIB/" 2>/dev/null || true
-          cp -rv "$SYS"/include/* "$DEST_INC/" 2>/dev/null || true
-          echo "=== NDK sysroot libs ==="
-          ls -lh "$DEST_LIB"/*.a 2>/dev/null | head -20
-          echo "=== NDK sysroot fontconfig ==="
-          ls "$DEST_INC/fontconfig/" 2>/dev/null | head -5
-          echo "=== NDK sysroot freetype ==="
-          ls "$DEST_INC/freetype2/" 2>/dev/null | head -5
-
-      - name: Clean cxx cache
-        run: |
           rm -rf android/app/.cxx android/.cxx 2>/dev/null || true
-          echo "cleaned .cxx"
 
       - name: Inject engine libs
         run: |
-          set +e
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
           mkdir -p "$DEST"
-          echo "=== engine-libs 内容 ==="
-          ls -lh engine-libs/
-          echo ""
-          echo "=== 注入 engine 特有的 .so（跳过 CS16-client 自编的）==="
-          KEEP="libxash.so libref_gl4es.so libref_gles1.so libref_gles3compat.so libref_gl2.so libref_sw.so libfilesystem_stdio.so libSDL2.so libmainui.so libmenu.so libxashmenu64.so"
-          SKIP="libclient_android_arm64.so libhl_android_arm64.so libserver.so libyapb_android_arm64.so libregamedll_android_arm64.so libclang_rt.asan-aarch64-android.so"
+          KEEP="libxash.so libref_gl4es.so libref_gles1.so libref_gles3compat.so libref_gl2.so libref_sw.so libfilesystem_stdio.so libSDL2.so"
           for so in engine-libs/*.so; do
             base=$(basename "$so")
-            skip=0
-            for s in $SKIP; do
-              [ "$base" = "$s" ] && skip=1 && break
+            keep=0
+            for k in $KEEP; do
+              [ "$base" = "$k" ] && keep=1 && break
             done
-            if [ $skip -eq 1 ]; then
-              echo "SKIP: $base"
-            else
-              cp -v "$so" "$DEST/"
-            fi
+            [ $keep -eq 1 ] && cp -v "$so" "$DEST/"
           done
-          echo ""
-          echo "=== 最终 jniLibs 内容 ==="
           ls -lh "$DEST/"
 
       - name: Set app name
@@ -391,7 +402,7 @@ jobs:
             exit 0
           fi
           FILTER='force_align_arg_pointer|unknown-attributes|Wunknown-attributes|Wdeprecated-declarations|overrides a member function|no previous prototype|Wunused|Wsign-compare|Wshadow|Wformat|declared here|note: expanded|in file included from|^note:|Wmissing-braces|Wpragma-pack|Wdivision-by-zero|Wswitch|Wparentheses|Wtautological|Wbitwise|Wsometimes-uninitialized|Wmacro-redefined|previous definition is here'
-          grep -nE "error:|fatal error:|FAILED:|FAILURE:|undefined reference|ninja: build stopped|What went wrong|Execution failed|Caused by:|ld: |cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file" "$LOG" | grep -vE "$FILTER" | head -200 >> "$OUT" || true
+          grep -nE "error:|fatal error:|FAILED:|FAILURE:|undefined reference|ninja: build stopped|What went wrong|Execution failed|Caused by:|ld: |cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file|Duplicate class|duplicate" "$LOG" | grep -vE "$FILTER" | head -200 >> "$OUT" || true
           {
             echo ""
             echo "=== TAIL (last 60) ==="
