@@ -231,28 +231,7 @@ jobs:
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
           mkdir -p cmake
-          cat > cmake/FWGSLib.cmake << 'CM_EOF'
-include(CMakeParseArguments)
-macro(fwgs_fix_default_msvc_settings)
-endmacro()
-function(fwgs_set_default_properties target)
-    set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
-endfunction()
-function(fwgs_add_compile_options target)
-    cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})
-    if(ARG_PRIVATE)
-        target_compile_options(${target} PRIVATE ${ARG_PRIVATE})
-    endif()
-    if(ARG_PUBLIC)
-        target_compile_options(${target} PUBLIC ${ARG_PUBLIC})
-    endif()
-    if(ARG_INTERFACE)
-        target_compile_options(${target} INTERFACE ${ARG_INTERFACE})
-    endif()
-endfunction()
-function(fwgs_install target)
-endfunction()
-CM_EOF
+          printf 'include(CMakeParseArguments)\nmacro(fwgs_fix_default_msvc_settings)\nendmacro()\nfunction(fwgs_set_default_properties target)\n    set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)\nendfunction()\nfunction(fwgs_add_compile_options target)\n    cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})\n    if(ARG_PRIVATE)\n        target_compile_options(${target} PRIVATE ${ARG_PRIVATE})\n    endif()\n    if(ARG_PUBLIC)\n        target_compile_options(${target} PUBLIC ${ARG_PUBLIC})\n    endif()\n    if(ARG_INTERFACE)\n        target_compile_options(${target} INTERFACE ${ARG_INTERFACE})\n    endif()\nendfunction()\nfunction(fwgs_install target)\nendfunction()\n' > cmake/FWGSLib.cmake
           grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF" || sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
           sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF"
           sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF"
