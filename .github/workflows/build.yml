@@ -299,6 +299,49 @@ jobs:
                   mf.write_text(s)
           PY
 
+      - name: Fix mainui sources
+        run: |
+          set +e
+          D=3rdparty/mainui_cpp
+          echo "=== 实际 color 文件 ==="
+          find "$D" -iname 'color.cpp' -o -iname 'color.h' || true
+          echo "=== CMakeLists 120-150 ==="
+          sed -n '120,150p' "$D/CMakeLists.txt" || true
+
+          python3 - << 'PY'
+          import pathlib, re
+          root = pathlib.Path('3rdparty/mainui_cpp')
+          mf = root / 'CMakeLists.txt'
+          if not mf.exists():
+              raise SystemExit(0)
+          s = mf.read_text()
+          lines = s.splitlines()
+          out = []
+          for ln in lines:
+              m = re.match(r'^(\s*)([\w./-]+\.(?:cpp|h|cc|cxx|c))\s*$', ln)
+              if m:
+                  indent, rel = m.group(1), m.group(2)
+                  p = root / rel
+                  if not p.exists():
+                      base = pathlib.Path(rel).name
+                      matches = [x for x in root.rglob(base) if x.is_file()]
+                      if not matches:
+                          matches = [x for x in root.rglob(base.lower()) if x.is_file()]
+                      if not matches:
+                          matches = [x for x in root.rglob('*') if x.is_file() and x.name.lower() == base.lower()]
+                      if matches:
+                          found = matches[0]
+                          rel2 = str(found.relative_to(root)).replace('\\', '/')
+                          print(f"REMAP: {rel} -> {rel2}")
+                          out.append(f"{indent}{rel2}")
+                          continue
+              out.append(ln)
+          mf.write_text('\n'.join(out) + '\n')
+          PY
+
+          echo "=== 修改后 130-150 ==="
+          sed -n '130,150p' "$D/CMakeLists.txt" || true
+
       - name: Build APK
         working-directory: android
         env:
