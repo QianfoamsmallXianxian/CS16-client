@@ -355,8 +355,6 @@ jobs:
               else:
                   print('archtypes.h already has guard')
           PY
-          grep -n -B1 -A1 'int64\|uint64' 3rdparty/mainui_cpp/miniutl/miniutl.h 2>/dev/null | head -20 || true
-          grep -n -B1 -A1 'int64\|uint64' engine/archtypes.h 2>/dev/null | head -20 || true
 
       - name: Remove uint64_bruh hacks
         run: |
@@ -444,7 +442,6 @@ jobs:
           p.write_text(s)
           PY
           grep -n 'XASH_SDK\|xashmenu fixed include' "$MF" || true
-          find . -name 'xash3d_types.h' -not -path '*/3rdparty/mainui_cpp/3rdparty/*' 2>/dev/null | head -5
 
       - name: Add STDINT_H for xashmenu
         run: |
@@ -485,7 +482,6 @@ jobs:
               } >> "$PH"
               echo "injected _format into port.h"
             fi
-            grep -n '_format' "$PH" | head -5
           else
             echo "common/port.h not found"
           fi
