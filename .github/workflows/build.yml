@@ -233,8 +233,6 @@ jobs:
               endif()
           endfunction()
           CMEOF
-          echo "=== FWGSLib.cmake ==="
-          cat cmake/FWGSLib.cmake
 
           if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
             sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
@@ -242,7 +240,7 @@ jobs:
           sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF" || true
           sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF" || true
 
-      - name: Patch desktop deps for android
+      - name: Patch desktop deps
         run: |
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
@@ -267,7 +265,56 @@ jobs:
               out.append(ln)
           p.write_text('\n'.join(out) + '\n')
           PY
-          grep -n -B1 -A1 'pkg_check_modules\|pkg_search_module' "$MF" || true
+
+      - name: Fix mainui sources
+        run: |
+          set +e
+          echo "=== grep Color.cpp ==="
+          grep -rn 'Color\.cpp' 3rdparty/mainui_cpp/ || true
+          echo "=== color files ==="
+          find 3rdparty/mainui_cpp -iname '*color*' || true
+          python3 - << 'PY'
+          import pathlib, re
+          root = pathlib.Path('3rdparty/mainui_cpp').resolve()
+          if not root.exists():
+              raise SystemExit(0)
+          exts = r'(?:cpp|cc|cxx|c)'
+          pat = re.compile(r'(?<![A-Za-z0-9_./-])([A-Za-z0-9_./-]+\.' + exts + r')(?![A-Za-z0-9_])')
+          removed, renamed, changed = [], [], []
+          for cm in list(root.rglob('CMakeLists.txt')) + list(root.rglob('*.cmake')):
+              try:
+                  text = cm.read_text()
+              except Exception:
+                  continue
+              base = cm.parent
+              new = text
+              for m in pat.finditer(text):
+                  rel = m.group(1)
+                  if (base / rel).resolve().exists():
+                      continue
+                  name = pathlib.Path(rel).name
+                  hits = [x for x in base.rglob('*') if x.is_file() and x.name.lower() == name.lower()]
+                  if hits:
+                      nr = str(hits[0].relative_to(base)).replace('\\','/')
+                      new = new.replace(rel, nr)
+                      renamed.append((str(cm), rel, nr))
+                      continue
+                  new = re.sub(r'(?m)^[ \t]*' + re.escape(rel) + r'[ \t]*\n', '', new)
+                  new = re.sub(r'\s+' + re.escape(rel) + r'(?=\s)', ' ', new)
+                  removed.append((str(cm), rel))
+              if new != text:
+                  cm.write_text(new)
+                  changed.append(str(cm))
+          print("=== changed ===")
+          for f in changed: print("  ", f)
+          print("=== renamed ===")
+          for cm, a, b in renamed: print(f"   {cm}: {a} -> {b}")
+          print("=== removed ===")
+          for cm, rel in removed: print(f"   {cm}: {rel}")
+          PY
+          echo "=== remaining Color.cpp ==="
+          grep -rn 'Color\.cpp' 3rdparty/mainui_cpp/ || echo "OK: none"
+          sed -n '130,150p' 3rdparty/mainui_cpp/CMakeLists.txt || true
 
       - name: Inject engine libs
         run: |
@@ -299,49 +346,6 @@ jobs:
                   mf.write_text(s)
           PY
 
-      - name: Fix mainui sources
-        run: |
-          set +e
-          D=3rdparty/mainui_cpp
-          echo "=== 实际 color 文件 ==="
-          find "$D" -iname 'color.cpp' -o -iname 'color.h' || true
-          echo "=== CMakeLists 120-150 ==="
-          sed -n '120,150p' "$D/CMakeLists.txt" || true
-
-          python3 - << 'PY'
-          import pathlib, re
-          root = pathlib.Path('3rdparty/mainui_cpp')
-          mf = root / 'CMakeLists.txt'
-          if not mf.exists():
-              raise SystemExit(0)
-          s = mf.read_text()
-          lines = s.splitlines()
-          out = []
-          for ln in lines:
-              m = re.match(r'^(\s*)([\w./-]+\.(?:cpp|h|cc|cxx|c))\s*$', ln)
-              if m:
-                  indent, rel = m.group(1), m.group(2)
-                  p = root / rel
-                  if not p.exists():
-                      base = pathlib.Path(rel).name
-                      matches = [x for x in root.rglob(base) if x.is_file()]
-                      if not matches:
-                          matches = [x for x in root.rglob(base.lower()) if x.is_file()]
-                      if not matches:
-                          matches = [x for x in root.rglob('*') if x.is_file() and x.name.lower() == base.lower()]
-                      if matches:
-                          found = matches[0]
-                          rel2 = str(found.relative_to(root)).replace('\\', '/')
-                          print(f"REMAP: {rel} -> {rel2}")
-                          out.append(f"{indent}{rel2}")
-                          continue
-              out.append(ln)
-          mf.write_text('\n'.join(out) + '\n')
-          PY
-
-          echo "=== 修改后 130-150 ==="
-          sed -n '130,150p' "$D/CMakeLists.txt" || true
-
       - name: Build APK
         working-directory: android
         env:
@@ -364,8 +368,11 @@ jobs:
           test -n "$APK" || { echo "no apk"; exit 1; }
           OUT="CS16Client-${TARGET_ABI}-standalone.apk"
           cp "$APK" "$OUT"
+          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
+          echo "=== size ==="
           ls -lh "$OUT"
+          echo "=== sha256 ==="
           sha256sum "$OUT"
 
       - name: Upload APK
