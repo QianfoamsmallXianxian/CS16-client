@@ -11,7 +11,7 @@ public class CS16Application extends Application {
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
         try {
-            CS16CrashHandler.install((android.app.Activity) null);
+            CS16CrashHandler.install(base);
             Log.i(TAG, "early handler installed");
         } catch (Throwable x) {
             Log.e(TAG, "early handler failed", x);

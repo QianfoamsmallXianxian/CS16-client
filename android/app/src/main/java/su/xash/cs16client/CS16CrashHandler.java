@@ -31,9 +31,20 @@ public class CS16CrashHandler implements Thread.UncaughtExceptionHandler {
 
     public static void install(Activity a) {
         try {
+            Context ctx = a != null ? a.getApplicationContext() : null;
             Thread.setDefaultUncaughtExceptionHandler(
-                new CS16CrashHandler(a, Thread.getDefaultUncaughtExceptionHandler()));
+                new CS16CrashHandler(ctx, Thread.getDefaultUncaughtExceptionHandler()));
             Log.i(TAG, "handler installed");
+        } catch (Throwable x) {
+            Log.e(TAG, "install failed", x);
+        }
+    }
+
+    public static void install(Context ctx) {
+        try {
+            Thread.setDefaultUncaughtExceptionHandler(
+                new CS16CrashHandler(ctx, Thread.getDefaultUncaughtExceptionHandler()));
+            Log.i(TAG, "handler installed (ctx)");
         } catch (Throwable x) {
             Log.e(TAG, "install failed", x);
         }
