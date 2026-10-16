@@ -132,14 +132,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout CS16-client
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Download engine libs
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: engine-libs
           path: engine-libs
@@ -186,27 +184,90 @@ jobs:
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
 
-      - name: Disable mainui_cpp build
+      - name: Write functional FWGSLib
         run: |
           set -euo pipefail
-          F=CMakeLists.txt
-          test -f "$F" || { echo "no CMakeLists"; exit 1; }
-          echo "=== 原始 option 行 ==="
-          grep -nE 'option\(BUILD_MAINUI|add_subdirectory\(3rdparty/mainui_cpp' "$F" || true
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || { echo "no mainui CMakeLists"; exit 1; }
+          mkdir -p cmake
+          cat > cmake/FWGSLib.cmake << 'CMEOF'
+          include(CMakeParseArguments)
+
+          macro(fwgs_fix_default_msvc_settings)
+              if(MSVC)
+                  add_compile_options(/MP /permissive-)
+                  add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
+              endif()
+          endmacro()
+
+          function(fwgs_set_default_properties target)
+              set_target_properties(${target} PROPERTIES
+                  CXX_STANDARD 17
+                  CXX_STANDARD_REQUIRED ON
+                  CXX_EXTENSIONS OFF
+                  C_STANDARD 11
+                  C_STANDARD_REQUIRED ON
+                  POSITION_INDEPENDENT_CODE ON
+              )
+          endfunction()
+
+          function(fwgs_add_compile_options target)
+              cmake_parse_arguments(ARG "" "" "PRIVATE;PUBLIC;INTERFACE" ${ARGN})
+              if(ARG_PRIVATE)
+                  target_compile_options(${target} PRIVATE ${ARG_PRIVATE})
+              endif()
+              if(ARG_PUBLIC)
+                  target_compile_options(${target} PUBLIC ${ARG_PUBLIC})
+              endif()
+              if(ARG_INTERFACE)
+                  target_compile_options(${target} INTERFACE ${ARG_INTERFACE})
+              endif()
+          endfunction()
+
+          function(fwgs_install target)
+              if(COMMAND install)
+                  install(TARGETS ${target}
+                      RUNTIME DESTINATION bin
+                      LIBRARY DESTINATION lib
+                      ARCHIVE DESTINATION lib)
+              endif()
+          endfunction()
+          CMEOF
+          echo "=== FWGSLib.cmake ==="
+          cat cmake/FWGSLib.cmake
+
+          if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
+            sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
+          fi
+          sed -i 's|^[[:space:]]*# *include(FWGSLib)|include(FWGSLib)|' "$MF" || true
+          sed -i 's|^[[:space:]]*# *fwgs_fix_default_msvc_settings()|fwgs_fix_default_msvc_settings()|' "$MF" || true
+
+      - name: Patch desktop deps for android
+        run: |
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
           python3 - << 'PY'
           import re, pathlib
-          p = pathlib.Path('CMakeLists.txt')
-          s = p.read_text()
-          s = re.sub(r'option\(BUILD_MAINUI\s+"[^"]*"\s+ON\)',
-                     'option(BUILD_MAINUI "Build menu library." OFF)', s)
-          s = re.sub(r'option\(BUILD_MAINUI\s+"[^"]*"\s+TRUE\)',
-                     'option(BUILD_MAINUI "Build menu library." OFF)', s)
-          s = re.sub(r'option\(BUILD_MAINUI\s+"[^"]*"\s+1\)',
-                     'option(BUILD_MAINUI "Build menu library." OFF)', s)
-          p.write_text(s)
+          p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
+          lines = p.read_text().splitlines()
+          out = []
+          targets = ('fontconfig','freetype','freetype2','x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')
+          for ln in lines:
+              m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\S+)\s+(?:REQUIRED\s+|QUIET\s+|NO_CMAKE_PATH\s+)*([\w.-]+)', ln)
+              m2 = re.match(r'^(\s*)pkg_search_module\s*\(\s*(\S+)\s+(?:REQUIRED\s+|QUIET\s+)*([\w.-]+)', ln)
+              mm = m or m2
+              if mm:
+                  indent = mm.group(1)
+                  module = mm.group(3).lower().split('>=')[0].split('<')[0].strip()
+                  if module in targets or any(module.startswith(t) for t in targets):
+                      out.append(f'{indent}if(NOT ANDROID)')
+                      out.append(ln)
+                      out.append(f'{indent}endif()')
+                      continue
+              out.append(ln)
+          p.write_text('\n'.join(out) + '\n')
           PY
-          echo "=== 修改后 ==="
-          grep -nE 'option\(BUILD_MAINUI' "$F" || true
+          grep -n -B1 -A1 'pkg_check_modules\|pkg_search_module' "$MF" || true
 
       - name: Inject engine libs
         run: |
@@ -238,32 +299,15 @@ jobs:
                   mf.write_text(s)
           PY
 
-      - name: List gradle tasks
+      - name: Build APK
         working-directory: android
+        env:
+          ANDROID_HOME: ${{ github.workspace }}/sdk
+          ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
+          JAVA_HOME: ${{ github.workspace }}/java
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon tasks --all 2>&1 | grep -iE '^assemble|^bundle' | head -40 || true
-
-      - name: Build GitDebug
-        id: build_gitdebug
-        continue-on-error: true
-        working-directory: android
-        env:
-          ANDROID_HOME: ${{ github.workspace }}/sdk
-          ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
-          JAVA_HOME: ${{ github.workspace }}/java
-        run: |
           ./gradlew --no-daemon --stacktrace assembleGitDebug
-
-      - name: Build fallback
-        if: steps.build_gitdebug.outcome == 'failure'
-        working-directory: android
-        env:
-          ANDROID_HOME: ${{ github.workspace }}/sdk
-          ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
-          JAVA_HOME: ${{ github.workspace }}/java
-        run: |
-          ./gradlew --no-daemon --stacktrace assembleContinuous
 
       - name: Locate APK
         if: always()
@@ -277,11 +321,8 @@ jobs:
           test -n "$APK" || { echo "no apk"; exit 1; }
           OUT="CS16Client-${TARGET_ABI}-standalone.apk"
           cp "$APK" "$OUT"
-          echo "=== native libs ==="
           unzip -l "$OUT" | grep '\.so' || true
-          echo "=== size ==="
           ls -lh "$OUT"
-          echo "=== sha256 ==="
           sha256sum "$OUT"
 
       - name: Upload APK
