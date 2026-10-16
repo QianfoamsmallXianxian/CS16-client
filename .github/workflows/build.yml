@@ -460,6 +460,47 @@ jobs:
           ninja -C build
           ninja -C build install
 
+      - name: Copy headers to sysroot include
+        run: |
+          SYS=${{ github.workspace }}/sysroot
+          mkdir -p "$SYS/include"
+          if [ -d /tmp/freetype-2.13.2/include ]; then
+            mkdir -p "$SYS/include/freetype2"
+            cp -rv /tmp/freetype-2.13.2/include/* "$SYS/include/freetype2/" 2>/dev/null || true
+          fi
+          if [ -d /tmp/fontconfig-2.14.2/include/fontconfig ]; then
+            mkdir -p "$SYS/include/fontconfig"
+            cp -rv /tmp/fontconfig-2.14.2/include/fontconfig/* "$SYS/include/fontconfig/" 2>/dev/null || true
+          fi
+          if [ -f /tmp/expat-2.5.0/lib/expat.h ]; then
+            cp -v /tmp/expat-2.5.0/lib/expat.h "$SYS/include/" 2>/dev/null || true
+            cp -v /tmp/expat-2.5.0/lib/expat_external.h "$SYS/include/" 2>/dev/null || true
+          fi
+          ls -la "$SYS/include/" | head -20
+          ls "$SYS/include/freetype2/" 2>/dev/null | head -5
+          ls "$SYS/include/fontconfig/" 2>/dev/null | head -5
+
+      - name: Ensure pkg-config files
+        run: |
+          set +e
+          SYS=${{ github.workspace }}/sysroot
+          mkdir -p "$SYS/lib/pkgconfig"
+          ls -la "$SYS/lib/pkgconfig/" 2>/dev/null
+          if [ ! -f "$SYS/lib/pkgconfig/freetype2.pc" ]; then
+            printf 'prefix=%s\nexec_prefix=\${prefix}\nlibdir=\${prefix}/lib\nincludedir=\${prefix}/include\nName: FreeType 2\nDescription: A free high-quality and portable font engine.\nVersion: 26.0.0\nRequires:\nRequires.private:\nLibs: -L\${libdir} -lfreetype\nCflags: -I\${includedir} -I\${includedir}/freetype2\n' "$SYS" > "$SYS/lib/pkgconfig/freetype2.pc"
+            echo "created freetype2.pc"
+          fi
+          if [ ! -f "$SYS/lib/pkgconfig/fontconfig.pc" ]; then
+            printf 'prefix=%s\nexec_prefix=\${prefix}\nlibdir=\${prefix}/lib\nincludedir=\${prefix}/include\nName: Fontconfig\nDescription: Font configuration library\nVersion: 2.14.2\nRequires: freetype2\nRequires.private: expat\nLibs: -L\${libdir} -lfontconfig\nCflags: -I\${includedir} -I\${includedir}/fontconfig\n' "$SYS" > "$SYS/lib/pkgconfig/fontconfig.pc"
+            echo "created fontconfig.pc"
+          fi
+          if [ ! -f "$SYS/lib/pkgconfig/expat.pc" ]; then
+            printf 'prefix=%s\nexec_prefix=\${prefix}\nlibdir=\${prefix}/lib\nincludedir=\${prefix}/include\nName: expat\nDescription: expat XML parser\nVersion: 2.5.0\nLibs: -L\${libdir} -lexpat\nCflags: -I\${includedir}\n' "$SYS" > "$SYS/lib/pkgconfig/expat.pc"
+            echo "created expat.pc"
+          fi
+          ls -la "$SYS/lib/pkgconfig/"
+          cat "$SYS/lib/pkgconfig/freetype2.pc"
+
       - name: Patch pc absolute paths
         env:
           SYS: ${{ github.workspace }}/sysroot
