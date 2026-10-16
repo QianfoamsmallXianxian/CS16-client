@@ -412,6 +412,16 @@ jobs:
           done
           ls -lh "$DEST/"
 
+      - name: Remove system libs
+        run: |
+          DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
+          for f in libandroid.so libdl.so liblog.so; do
+            if [ -f "$DEST/$f" ]; then
+              rm -v "$DEST/$f"
+            fi
+          done
+          ls -lh "$DEST/"
+
       - name: Set app name
         run: python3 ci-scripts/set_app_name.py
 
