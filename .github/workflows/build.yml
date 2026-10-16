@@ -194,7 +194,7 @@ jobs:
         run: |
           NDK="$ANDROID_NDK_HOME"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          cat > /tmp/android-arm64.ini << CFEOF
+          cat > /tmp/android-arm64.ini << HDTAG1_EOF
           [binaries]
           c = '$BIN/aarch64-linux-android21-clang'
           cpp = '$BIN/aarch64-linux-android21-clang++'
@@ -208,7 +208,7 @@ jobs:
           endian = 'little'
           [properties]
           needs_exe_wrapper = true
-          CFEOF
+          HDTAG1_EOF
           cat /tmp/android-arm64.ini
 
       - name: Build expat for android
@@ -357,7 +357,7 @@ jobs:
             echo '    target_compile_definitions(${MAINUI_LIBRARY} PRIVATE "STDINT_H=<cstdint>")' >> "$MF"
             echo 'endif()' >> "$MF"
           }
-          python3 - << 'PY'
+          python3 - << 'HDTAG2_EOF'
           import pathlib, re
           p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
           s = p.read_text()
@@ -367,12 +367,12 @@ jobs:
           ]:
               s, _ = re.subn(old, new, s)
           p.write_text(s)
-          PY
+          HDTAG2_EOF
 
       - name: Fix sources int64 bruh
         run: |
           set +e
-          cat > /tmp/fix_sources.py << 'PYS_EOF'
+          cat > /tmp/fix_sources.py << 'HDTAG3_EOF'
           import pathlib, re
           root = pathlib.Path('3rdparty/mainui_cpp').resolve()
           if root.exists():
@@ -444,7 +444,7 @@ jobs:
                       s4 = pp.sub('', s4)
                   if s4 != s3:
                       f.write_text(s4)
-          PYS_EOF
+          HDTAG3_EOF
           python3 /tmp/fix_sources.py
 
       - name: Fix _format and int3
@@ -460,7 +460,7 @@ jobs:
             cat /tmp/mi_header.txt "$F" > /tmp/mi_new.h
             mv /tmp/mi_new.h "$F"
           fi
-          cat > /tmp/fix_int3.py << 'PYI_EOF'
+          cat > /tmp/fix_int3.py << 'HDTAG4_EOF'
           import pathlib, re
           roots = ['3rdparty/ReGameDLL_CS', '3rdparty/mainui_cpp', 'dlls', 'cl_dll', 'engine', 'common']
           pats = [
@@ -492,7 +492,7 @@ jobs:
                       s2 = pat.sub(rep, s2)
                   if s2 != s:
                       f.write_text(s2)
-          PYI_EOF
+          HDTAG4_EOF
           python3 /tmp/fix_int3.py
 
       - name: Fix saverestore and version script
@@ -500,7 +500,7 @@ jobs:
           set +e
           F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
           if [ -f "$F" ]; then
-            python3 - << 'PY'
+            python3 - << 'HDTAG5_EOF'
             import pathlib
             p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
             lines = p.read_text().splitlines()
@@ -513,9 +513,9 @@ jobs:
                     lines[idx] = new
                     p.write_text('\n'.join(lines) + '\n')
                     print('patched 429')
-            PY
+            HDTAG5_EOF
           fi
-          python3 - << 'PY'
+          python3 - << 'HDTAG6_EOF'
           import pathlib, re
           root = pathlib.Path('3rdparty/ReGameDLL_CS')
           if not root.exists(): raise SystemExit(0)
@@ -527,7 +527,7 @@ jobs:
               if '__gcclibcxx_demangle_callback' in s:
                   s2 = pat.sub('', s)
                   if s2 != s: f.write_text(s2)
-          PY
+          HDTAG6_EOF
           MF=3rdparty/ReGameDLL_CS/CMakeLists.txt
           if [ -f "$MF" ] && ! grep -q 'CI_RELAX_PTR_CAST' "$MF"; then
             {
@@ -543,7 +543,7 @@ jobs:
           fi
           MF2=3rdparty/mainui_cpp/CMakeLists.txt
           if [ -f "$MF2" ] && ! grep -q 'CI_DESKTOP_WRAP' "$MF2"; then
-            python3 - << 'PY'
+            python3 - << 'HDTAG7_EOF'
             import re, pathlib
             p = pathlib.Path('3rdparty/mainui_cpp/CMakeLists.txt')
             lines = p.read_text().splitlines()
@@ -560,7 +560,7 @@ jobs:
                         continue
                 out.append(ln)
             p.write_text('\n'.join(out) + '\n')
-            PY
+            HDTAG7_EOF
           fi
           cp -v engine-libs/*.so android/app/src/main/jniLibs/${TARGET_ABI}/ 2>/dev/null || {
             DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
@@ -570,7 +570,7 @@ jobs:
 
       - name: Set app name
         run: |
-          python3 - << 'PY'
+          python3 - << 'HDTAG8_EOF'
           import re, pathlib
           sp = pathlib.Path('android/app/src/main/res/values/strings.xml')
           if sp.exists():
@@ -588,7 +588,7 @@ jobs:
               if 'android:label="@string/app_name"' not in s:
                   s = re.sub(r'android:label="[^"]*"', 'android:label="Counter Strike 1.6"', s)
                   mf.write_text(s)
-          PY
+          HDTAG8_EOF
 
       - name: Build APK
         id: build_apk
