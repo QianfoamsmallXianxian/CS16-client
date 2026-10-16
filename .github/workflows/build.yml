@@ -415,6 +415,13 @@ jobs:
       - name: Set app name
         run: python3 ci-scripts/set_app_name.py
 
+      - name: Verify crash handler source
+        run: |
+          ls -la android/app/src/main/cpp/
+          ls -la android/app/src/main/java/su/xash/cs16client/
+          grep -n 'externalNativeBuild' android/app/build.gradle || echo "missing"
+          grep -n 'cs16_crash_handler' android/app/src/main/cpp/CMakeLists.txt
+
       - name: Build APK
         id: build_apk
         continue-on-error: true

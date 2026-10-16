@@ -191,4 +191,27 @@ public class CS16CrashHandler implements Thread.UncaughtExceptionHandler {
             }
         }
     }
+
+    static {
+        try {
+            System.loadLibrary("cs16_crash_handler");
+        } catch (Throwable x) {
+            Log.e(TAG, "native lib load failed", x);
+        }
+    }
+
+    public static native void installNative(String dir, String pkg);
+    public static native void testNativeCrash();
+
+    public static void installAll(Context ctx) {
+        install(ctx);
+        try {
+            String dir = getDir(ctx).getAbsolutePath();
+            String pkg = ctx != null ? ctx.getPackageName() : "unknown";
+            installNative(dir, pkg);
+            Log.i(TAG, "native handler installed, dir=" + dir);
+        } catch (Throwable x) {
+            Log.e(TAG, "installNative failed", x);
+        }
+    }
 }

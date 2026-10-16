@@ -11,10 +11,10 @@ public class CS16Application extends Application {
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
         try {
-            CS16CrashHandler.install(base);
-            Log.i(TAG, "early handler installed");
+            CS16CrashHandler.installAll(base);
+            Log.i(TAG, "crash handlers installed");
         } catch (Throwable x) {
-            Log.e(TAG, "early handler failed", x);
+            Log.e(TAG, "installAll failed", x);
         }
     }
 
@@ -23,11 +23,9 @@ public class CS16Application extends Application {
         super.onCreate();
         Log.i(TAG, "app onCreate");
         try {
-            Thread.setDefaultUncaughtExceptionHandler(
-                new CS16CrashHandler(this, Thread.getDefaultUncaughtExceptionHandler()));
-            Log.i(TAG, "handler installed in Application");
+            CS16CrashHandler.installAll(this);
         } catch (Throwable x) {
-            Log.e(TAG, "app handler failed", x);
+            Log.e(TAG, "onCreate failed", x);
         }
     }
 }
