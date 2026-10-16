@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install build deps
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config ccache wget unzip xz-utils
@@ -170,7 +170,7 @@ jobs:
           cd expat-2.5.0
           cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF
           cmake --build build --target install
-          ls -lh "$SYS/lib/" "$SYS/include/" || true
+          ls -lh "$SYS/lib/" || true
 
       - name: Build freetype
         run: |
@@ -180,10 +180,9 @@ jobs:
           wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
           tar xzf ft.tar.gz
           cd freetype-2.13.2
-          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Dharfbuzz=disabled -Dbzip2=disabled -Dpng=disabled -Dbrotli=disabled -Dzlib=system -Dtests=disabled
-          ninja -C build
-          ninja -C build install
-          ls "$SYS/lib/" | grep -i freetype || true
+          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DFT_DISABLE_HARFBUZZ=TRUE -DFT_DISABLE_BZIP2=TRUE -DFT_DISABLE_PNG=TRUE -DFT_DISABLE_BROTLI=TRUE -DFT_DISABLE_ZLIB=TRUE -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --target install
+          ls -lh "$SYS/lib/" | grep -i freetype || true
 
       - name: Build fontconfig
         run: |
@@ -194,7 +193,6 @@ jobs:
           tar xzf fc.tar.gz
           cd fontconfig-2.14.2
           ls "$SYS/lib/pkgconfig/" || true
-          cat "$SYS/lib/pkgconfig/freetype2.pc" 2>/dev/null || echo "no freetype2.pc"
           export PKG_CONFIG_PATH="$SYS/lib/pkgconfig"
           export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
           unset PKG_CONFIG_SYSROOT_DIR
@@ -206,8 +204,6 @@ jobs:
           ninja -C build
           ninja -C build install
           ls "$SYS/lib/" | grep -i fontconfig || true
-          find "$SYS/include" -name 'fontconfig.h' || true
-          cat "$SYS/lib/pkgconfig/fontconfig.pc" 2>/dev/null || true
 
       - name: Wire fontconfig
         run: |
@@ -215,23 +211,8 @@ jobs:
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
           if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
-            {
-              echo ''
-              echo '# CI_FONTCONFIG_WIRED'
-              echo 'if(TARGET ${MAINUI_LIBRARY})'
-              echo '    target_include_directories(${MAINUI_LIBRARY} PRIVATE'
-              echo "        $SYS/include"
-              echo "        $SYS/include/freetype2"
-              echo '    )'
-              echo '    target_link_libraries(${MAINUI_LIBRARY} PRIVATE'
-              echo "        $SYS/lib/libfontconfig.a"
-              echo "        $SYS/lib/libfreetype.a"
-              echo "        $SYS/lib/libexpat.a"
-              echo '    )'
-              echo 'endif()'
-            } >> "$MF"
+            printf '\n# CI_FONTCONFIG_WIRED\nif(TARGET ${MAINUI_LIBRARY})\n    target_include_directories(${MAINUI_LIBRARY} PRIVATE\n        %s/include\n        %s/include/freetype2\n    )\n    target_link_libraries(${MAINUI_LIBRARY} PRIVATE\n        %s/lib/libfontconfig.a\n        %s/lib/libfreetype.a\n        %s/lib/libexpat.a\n    )\nendif()\n' "$SYS" "$SYS" "$SYS" "$SYS" "$SYS" >> "$MF"
           fi
-          grep -n 'CI_FONTCONFIG_WIRED' "$MF" || true
 
       - name: Fix FWGSLib
         run: |
@@ -281,29 +262,25 @@ jobs:
 
       - name: Fix xashmenu link deps
         run: |
-          set +e
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || exit 0
           if grep -q 'CI_XASHMENU_LINKS' "$MF"; then
-            echo "already patched"
             exit 0
           fi
-          {
-            echo ''
-            echo '# CI_XASHMENU_LINKS'
-            echo 'foreach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64)'
-            echo '    if(TARGET ${_tgt})'
-            echo '        target_link_libraries(${_tgt} PRIVATE z)'
-            echo '        target_sources(${_tgt} PRIVATE'
-            for f in 3rdparty/mainui_cpp/miniutl/*.cpp; do
-              [ -f "$f" ] && echo "            ${f#3rdparty/mainui_cpp/}"
-            done
-            echo '        )'
-            echo '    endif()'
-            echo 'endforeach()'
-          } >> "$MF"
-          echo "=== patched ==="
-          tail -30 "$MF"
+          printf '\n# CI_XASHMENU_LINKS\nforeach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64)\n    if(TARGET ${_tgt})\n        target_link_libraries(${_tgt} PRIVATE z)\n    endif()\nendforeach()\n' >> "$MF"
+
+      - name: Restrict ABI and clean x86 libs
+        run: |
+          find 3rdparty/ReGameDLL_CS -path '*linux32*' -name '*.so' -exec rm -v {} \; 2>/dev/null || true
+          find 3rdparty/ReGameDLL_CS -path '*linux64*' -name '*.so' -exec rm -v {} \; 2>/dev/null || true
+          find 3rdparty/ReGameDLL_CS -path '*win32*' -name '*.lib' -exec rm -v {} \; 2>/dev/null || true
+          F=android/app/build.gradle
+          test -f "$F" || F=android/app/build.gradle.kts
+          if [ -f "$F" ]; then
+            cp "$F" "$F.bak"
+            sed -i 's/abiFilters[^}]*/abiFilters "arm64-v8a"/' "$F" || true
+            grep -n 'abiFilters' "$F" || true
+          fi
 
       - name: Inject engine libs
         run: |
@@ -313,7 +290,23 @@ jobs:
 
       - name: Set app name
         run: |
-          python3 - bash ci-scripts/heredoc_1.sh
+          python3 - << 'PYNAM'
+import re, pathlib
+sp = pathlib.Path('android/app/src/main/res/values/strings.xml')
+if sp.exists():
+    s = sp.read_text()
+    if 'name="app_name"' in s:
+        s = re.sub(r'<string name="app_name">[^<]*</string>', '<string name="app_name">Counter Strike 1.6</string>', s)
+    else:
+        s = s.replace('</resources>', '    <string name="app_name">Counter Strike 1.6</string>\n</resources>')
+    sp.write_text(s)
+mf = pathlib.Path('android/app/src/main/AndroidManifest.xml')
+if mf.exists():
+    s = mf.read_text()
+    if 'android:label="@string/app_name"' not in s:
+        s = re.sub(r'android:label="[^"]*"', 'android:label="Counter Strike 1.6"', s)
+        mf.write_text(s)
+PYNAM
 
       - name: Build APK
         id: build_apk

@@ -4,7 +4,7 @@ if not p.exists():
     raise SystemExit(0)
 lines = p.read_text().splitlines()
 out = []
-targets = ('fontconfig','freetype','freetype2','x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')
+targets = ('x11','wayland','glib','pango','xkbcommon','xi','xcursor','xinerama','xrandr','xss','xext','alsa','pulse','pulseaudio','dbus','libusb','udev')
 for ln in lines:
     m = re.match(r'^(\s*)pkg_check_modules\s*\(\s*(\S+)\s+(?:REQUIRED\s+|QUIET\s+|NO_CMAKE_PATH\s+)*([\w.-]+)', ln)
     if m:
