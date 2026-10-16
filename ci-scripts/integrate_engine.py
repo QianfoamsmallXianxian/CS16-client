@@ -1,4 +1,4 @@
-import pathlib, re, glob, sys
+import pathlib, re, glob, os, shutil
 
 JAVA = pathlib.Path('android/app/src/main/java')
 MANIFEST = pathlib.Path('android/app/src/main/AndroidManifest.xml')
@@ -57,7 +57,6 @@ public class CZeroActivity extends Activity {
 ''')
 
 patched_r = 0
-patched_pkg = 0
 for f in glob.glob(str(JAVA / 'su/xash/engine/**/*.java'), recursive=True):
     p = pathlib.Path(f)
     s = p.read_text()
@@ -67,56 +66,67 @@ for f in glob.glob(str(JAVA / 'su/xash/engine/**/*.java'), recursive=True):
     s = re.sub(r'(?<![\w.])R\.', 'su.xash.cs16client.R.', s)
     s = re.sub(r'import\s+su\.xash\.engine\.([A-Z]\w*)\s*;', r'import su.xash.cs16client.\1;', s)
     s = re.sub(r'"su\.xash\.engine"', 'getPackageName()', s)
-    s = re.sub(r'su\.xash\.engine\.XashActivity', 'su.xash.engine.XashActivity', s)
     s = re.sub(r'BuildConfig\.APPLICATION_ID', 'getPackageName()', s)
     s = re.sub(r'import\s+su\.xash\.engine\.BuildConfig\s*;', '', s)
     if s != orig:
         p.write_text(s)
         patched_r += 1
-print(f"patched java: {patched_r}")
+print(f"patched java R refs: {patched_r}")
 
-if MANIFEST.exists():
-    s = MANIFEST.read_text()
-    if 'su.xash.engine.XashActivity' not in s:
-        block = '''
-        <activity
-            android:name="su.xash.engine.XashActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode|density"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:screenOrientation="sensorLandscape"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
-        <activity
-            android:name="su.xash.engine.EngineActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode|density"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
-        <activity
-            android:name="org.libsdl.app.SDLActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode|density"
-            android:exported="false"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
-'''
-        s = s.replace('    </application>', block + '    </application>')
-        MANIFEST.write_text(s)
-        print("manifest updated")
+manifest_src = pathlib.Path('/tmp/xash/android/app/src/main/AndroidManifest.xml')
+if manifest_src.exists() and MANIFEST.exists():
+    src = manifest_src.read_text()
+    dst = MANIFEST.read_text()
+    for m in re.finditer(r'<uses-permission[^/]*/>', src):
+        perm = m.group(0)
+        name = re.search(r'android:name="([^"]+)"', perm)
+        if name and name.group(1) not in dst:
+            dst = dst.replace('<application', perm + chr(10) + '    <application', 1)
+    for act_name in ['su.xash.engine.XashActivity', 'su.xash.engine.EngineActivity',
+                     'su.xash.engine.EngineActivityAlias', 'org.libsdl.app.SDLActivity']:
+        if act_name not in dst:
+            block = chr(10) + '        <activity' + chr(10) + \
+                    f'            android:name="{act_name}"' + chr(10) + \
+                    '            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode|density"' + chr(10) + \
+                    '            android:exported="false"' + chr(10) + \
+                    '            android:theme="@style/Theme.Xash3D" />'
+            dst = dst.replace('    </application>', block + chr(10) + '    </application>')
+    MANIFEST.write_text(dst)
+    print("manifest merged")
+
+RES_SRC = pathlib.Path('/tmp/xash/android/app/src/main/res')
+if RES_SRC.exists() and RES.exists():
+    protected = ('mipmap-anydpi-v26', 'mipmap-hdpi', 'mipmap-mdpi', 'mipmap-xhdpi',
+                 'mipmap-xxhdpi', 'mipmap-xxxhdpi')
+    for d in RES_SRC.iterdir():
+        if not d.is_dir():
+            continue
+        name = d.name
+        if name in protected:
+            continue
+        dst_d = RES / name
+        dst_d.mkdir(parents=True, exist_ok=True)
+        for f in d.iterdir():
+            if f.is_file():
+                shutil.copy2(f, dst_d / f.name)
+        print(f"copied res/{name}")
+
+for g in ['mipmap-anydpi-v26', 'mipmap-hdpi', 'mipmap-mdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']:
+    src_d = RES_SRC / g
+    if not src_d.exists():
+        continue
+    dst_d = RES / g
+    if dst_d.exists():
+        for f in src_d.iterdir():
+            if f.is_file() and not (dst_d / f.name).exists():
+                shutil.copy2(f, dst_d / f.name)
 
 strings = RES / 'values' / 'strings.xml'
 if strings.exists():
     s = strings.read_text()
-    for key, val in [
-        ('xash_loading', 'Loading...'),
-        ('xash_error', 'Error'),
-        ('xash_ok', 'OK'),
-        ('xash_cancel', 'Cancel'),
-    ]:
-        if f'name="{key}"' not in s:
-            s = s.replace('</resources>', f'    <string name="{key}">{val}</string>' + chr(10) + '</resources>')
-    strings.write_text(s)
-    print("strings patched")
+    if 'name="app_name"' not in s:
+        s = s.replace('</resources>', '    <string name="app_name">Counter Strike 1.6</string>' + chr(10) + '</resources>')
+        strings.write_text(s)
+    print("app_name ensured")
 
-ids = RES / 'values' / 'ids.xml'
-if not ids.exists():
-    ids.write_text('<?xml version="1.0" encoding="utf-8"?>' + chr(10) + '<resources></resources>')
 print("done")
