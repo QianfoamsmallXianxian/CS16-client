@@ -1,38 +1,52 @@
 package su.xash.cs16client;
 
 import android.app.Activity;
-import android.content.ComponentName;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 
 public class CZeroActivity extends Activity {
+    private static final String TAG = "CS16MainCZ";
+    private static final long START_TIMEOUT_MS = 5000L;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        String pkg = "su.xash.engine.test";
+        CS16CrashHandler.install(this);
+        Log.i(TAG, "onCreate, package=" + getPackageName());
 
         try {
-            getPackageManager().getPackageInfo(pkg, 0);
-        } catch (PackageManager.NameNotFoundException e) {
-            try {
-                pkg = "su.xash.engine";
-                getPackageManager().getPackageInfo(pkg, 0);
-            } catch (PackageManager.NameNotFoundException ex) {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/FWGS/xash3d-fwgs/releases/tag/continuous")).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
-                finish();
-                return;
-            }
+            Intent i = new Intent();
+            i.setClassName(getPackageName(), "su.xash.engine.XashActivity");
+            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            i.putExtra("gamedir", "czero");
+            i.putExtra("gamelibdir", getApplicationInfo().nativeLibraryDir);
+            i.putExtra("argv", "-dev 2 -log -dll @yapb");
+            i.putExtra("package", getPackageName());
+            startActivity(i);
+            Log.i(TAG, "XashActivity startActivity ok");
+            watchStartup();
+        } catch (Throwable e) {
+            Log.e(TAG, "startActivity failed", e);
+            CS16CrashHandler.report(this, "startactivity_failed", "CZeroActivity failed to launch XashActivity", e);
+            finish();
+            return;
         }
-
-        startActivity(new Intent().setComponent(new ComponentName(pkg, "su.xash.engine.XashActivity"))
-                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                .putExtra("gamedir", "czero")
-                .putExtra("gamelibdir", getApplicationInfo().nativeLibraryDir)
-                .putExtra("argv", "-dev 2 -log -dll @yapb")
-                .putExtra("package", getPackageName()));
         finish();
+    }
+
+    private void watchStartup() {
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!XashStartupTracker.getInstance().isXashStarted()) {
+                    Log.e(TAG, "XashActivity did not start within timeout");
+                    CS16CrashHandler.report(CZeroActivity.this, "xash_start_timeout",
+                        "XashActivity did not call onCreate within " + START_TIMEOUT_MS + "ms.");
+                }
+            }
+        }, START_TIMEOUT_MS);
     }
 }
