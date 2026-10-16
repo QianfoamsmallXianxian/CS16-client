@@ -299,6 +299,8 @@ jobs:
           ANDROID_HOME: ${{ github.workspace }}/sdk
           ANDROID_SDK_ROOT: ${{ github.workspace }}/sdk
           JAVA_HOME: ${{ github.workspace }}/java
+          LIBRARY_PATH: ${{ github.workspace }}/sysroot/lib
+          LDFLAGS: -L${{ github.workspace }}/sysroot/lib
           PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/lib/pkgconfig:${{ github.workspace }}/sysroot/share/pkgconfig
           PKG_CONFIG_LIBDIR: ${{ github.workspace }}/sysroot/lib/pkgconfig
         run: |
