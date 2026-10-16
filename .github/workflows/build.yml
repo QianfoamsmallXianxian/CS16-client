@@ -282,6 +282,28 @@ jobs:
             grep -n 'abiFilters' "$F" || true
           fi
 
+      - name: Copy sysroot libs to NDK toolchain
+        run: |
+          set +e
+          SYS=${{ github.workspace }}/sysroot
+          NDK_SYS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          DEST_LIB="$NDK_SYS/usr/lib/aarch64-linux-android"
+          DEST_INC="$NDK_SYS/usr/include"
+          mkdir -p "$DEST_LIB" "$DEST_INC"
+          cp -v "$SYS"/lib/*.a "$DEST_LIB/" 2>/dev/null || true
+          cp -rv "$SYS"/include/* "$DEST_INC/" 2>/dev/null || true
+          echo "=== NDK sysroot libs ==="
+          ls -lh "$DEST_LIB"/*.a 2>/dev/null | head -20
+          echo "=== NDK sysroot fontconfig ==="
+          ls "$DEST_INC/fontconfig/" 2>/dev/null | head -5
+          echo "=== NDK sysroot freetype ==="
+          ls "$DEST_INC/freetype2/" 2>/dev/null | head -5
+
+      - name: Clean cxx cache
+        run: |
+          rm -rf android/app/.cxx android/.cxx 2>/dev/null || true
+          echo "cleaned .cxx"
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
