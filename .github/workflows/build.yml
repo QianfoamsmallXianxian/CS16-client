@@ -158,8 +158,10 @@ jobs:
           git sparse-checkout set android/app/src/main/java android/app/src/main/res android/app/src/main/assets
           cd $GITHUB_WORKSPACE
           if [ -d /tmp/xash/android/app/src/main/java/su/xash/engine ]; then
-            find /tmp/xash/android/app/src/main/java/su/xash/engine -type d | head -20
+            find /tmp/xash/android/app/src/main/java/su/xash/engine -type d
             find /tmp/xash/android/app/src/main/java/su/xash/engine -name '*.java' | wc -l
+            ls -la /tmp/xash/android/app/src/main/java/su/xash/engine/util/ 2>/dev/null || echo "no util dir"
+            find /tmp/xash -name 'CrashReports.java' 2>/dev/null || echo "not found"
           fi
           rm -rf /tmp/SDL2
           git clone --depth 1 --branch release-2.30.x https://github.com/libsdl-org/SDL.git /tmp/SDL2
