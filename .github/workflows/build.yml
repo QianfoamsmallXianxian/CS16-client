@@ -336,13 +336,28 @@ jobs:
             cat "$OUT"
             exit 0
           fi
-          FILTER='force_align_arg_pointer|unknown-attributes|Wunknown-attributes|Wdeprecated-declarations|overrides a member function|no previous prototype|Wunused|Wsign-compare|Wshadow|Wformat|declared here|note: expanded|in file included from|^note:|Wmissing-braces|Wpragma-pack|Wdivision-by-zero|Wswitch|Wparentheses|Wtautological|Wbitwise|Wsometimes-uninitialized|Wmacro-redefined|previous definition is here'
-          grep -nE "error:|fatal error:|FAILED:|FAILURE:|undefined reference|ninja: build stopped|What went wrong|Execution failed|Caused by:|ld: |cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file|Duplicate class|duplicate" "$LOG" | grep -vE "$FILTER" | head -200 >> "$OUT" || true
-          {
-            echo ""
-            echo "=== TAIL (last 60) ==="
-          } >> "$OUT"
-          tail -60 "$LOG" | grep -vE "$FILTER" >> "$OUT" || true
+          FILTER='force_align_arg_pointer|unknown-attributes|Wunknown-attributes|Wdeprecated-declarations|overrides a member function|no previous prototype|Wunused|Wsign-compare|Wshadow|Wformat|declared here|note: expanded|^note:|Wmissing-braces|Wpragma-pack|Wdivision-by-zero|Wswitch|Wparentheses|Wtautological|Wbitwise|Wsometimes-uninitialized|Wmacro-redefined|previous definition is here|at java\.base|at org\.gradle|at com\.android|at java\.util|at kotlin'
+
+          echo "=== CMake Errors ===" >> "$OUT"
+          grep -nE "CMake Error|CMake Warning at|CMakeLists\.txt:[0-9]+|CMake was unable|CMake could not|Include could not find|Unknown CMake|Cmake.*failed|target_|The source directory" "$LOG" | grep -vE "$FILTER" | head -100 >> "$OUT" || true
+
+          echo "" >> "$OUT"
+          echo "=== All error: lines ===" >> "$OUT"
+          grep -nE "error:|fatal error:|FAILED:|undefined reference|ninja: build stopped|cannot find|undeclared|unknown type name|expected .* before|unrecognized|cannot open|no such file|Duplicate class" "$LOG" | grep -vE "$FILTER" | head -100 >> "$OUT" || true
+
+          echo "" >> "$OUT"
+          echo "=== Context around first CMake Error ===" >> "$OUT"
+          FIRST_LINE=$(grep -nE "CMake Error|CMakeLists\.txt:[0-9]+.*Error" "$LOG" | head -1 | cut -d: -f1)
+          if [ -n "$FIRST_LINE" ]; then
+            START=$((FIRST_LINE - 20))
+            END=$((FIRST_LINE + 40))
+            [ $START -lt 1 ] && START=1
+            sed -n "${START},${END}p" "$LOG" >> "$OUT"
+          fi
+
+          echo "" >> "$OUT"
+          echo "=== TAIL (last 80) ===" >> "$OUT"
+          tail -80 "$LOG" | grep -vE "$FILTER" >> "$OUT" || true
           wc -l "$OUT"
           cat "$OUT"
 
@@ -378,3 +393,96 @@ jobs:
           path: CS16Client-${{ env.TARGET_ABI }}-standalone.apk
           retention-days: 30
           if-no-files-found: error
+
+      - name: Force mainui_cpp to cs16-client branch
+        run: |
+          set +e
+          rm -rf 3rdparty/mainui_cpp
+          git clone --depth 1 --branch cs16-client --recursive https://github.com/Velaron/mainui_cpp 3rdparty/mainui_cpp
+          cd 3rdparty/mainui_cpp
+          for f in menus/client/JoinGame.cpp menus/client/JoinClass.cpp menus/client/ClientWindow.cpp; do
+            [ -f "$f" ] || echo "MISSING: $f"
+          done
+          cd $GITHUB_WORKSPACE
+
+      - name: Prepare SDL
+        run: |
+          mkdir -p 3rdparty
+          rm -rf 3rdparty/SDL
+          wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz" -O /tmp/sdl.tar.gz
+          tar -xzf /tmp/sdl.tar.gz -C 3rdparty
+          mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
+
+      - name: Generate cross file
+        run: |
+          NDK="$ANDROID_NDK_HOME"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          printf "[binaries]\nc = '%s/aarch64-linux-android21-clang'\ncpp = '%s/aarch64-linux-android21-clang++'\nar = '%s/llvm-ar'\nstrip = '%s/llvm-strip'\npkg-config = '/usr/bin/pkg-config'\n[host_machine]\nsystem = 'android'\ncpu_family = 'aarch64'\ncpu = 'aarch64'\nendian = 'little'\n[properties]\nneeds_exe_wrapper = true\n" "$BIN" "$BIN" "$BIN" "$BIN" > /tmp/android-arm64.ini
+
+      - name: Build expat
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          mkdir -p "$SYS"
+          cd /tmp
+          wget -q https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz -O expat.tar.gz
+          tar xzf expat.tar.gz
+          cd expat-2.5.0
+          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --target install
+
+      - name: Build freetype
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          cd /tmp
+          wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
+          tar xzf ft.tar.gz
+          cd freetype-2.13.2
+          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DFT_DISABLE_HARFBUZZ=TRUE -DFT_DISABLE_BZIP2=TRUE -DFT_DISABLE_PNG=TRUE -DFT_DISABLE_BROTLI=TRUE -DFT_DISABLE_ZLIB=TRUE -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --target install
+
+      - name: Build fontconfig
+        run: |
+          set -e
+          SYS=${{ github.workspace }}/sysroot
+          cd /tmp
+          wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
+          tar xzf fc.tar.gz
+          cd fontconfig-2.14.2
+          export PKG_CONFIG_PATH="$SYS/lib/pkgconfig"
+          export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
+          unset PKG_CONFIG_SYSROOT_DIR
+          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled || {
+            cat build/meson-logs/meson-log.txt 2>/dev/null | tail -80
+            exit 1
+          }
+          ninja -C build
+          ninja -C build install
+
+      - name: Patch pc absolute paths
+        env:
+          SYS: ${{ github.workspace }}/sysroot
+        run: python3 ci-scripts/patch_pc.py
+
+      - name: Prepend link_directories
+        env:
+          SYS: ${{ github.workspace }}/sysroot
+        run: python3 ci-scripts/prepend_linkdirs.py
+
+      - name: Copy sysroot libs to NDK
+        run: |
+          SYS=${{ github.workspace }}/sysroot
+          NDK_SYS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          mkdir -p "$NDK_SYS/usr/lib/aarch64-linux-android" "$NDK_SYS/usr/include"
+          cp -v "$SYS"/lib/*.a "$NDK_SYS/usr/lib/aarch64-linux-android/" 2>/dev/null || true
+          cp -rv "$SYS"/include/* "$NDK_SYS/usr/include/" 2>/dev/null || true
+
+      - name: Wire fontconfig
+        run: |
+          SYS=${{ github.workspace }}/sysroot
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
+          if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
+            printf '\n# CI_FONTCONFIG_WIRED\nif(TARGET ${MAINUI_LIBRARY})\n    target_include_directories(${MAINUI_LIBRARY} PRIVATE\n        %s/include\n        %s/include/freetype2\n    )\n    target_link_libraries(${MAINUI_LIBRARY} PRIVATE\n        %s/lib/libfontconfig.a\n        %s/lib/libfreetype.a\n        %s/lib/libexpat.a\n    )\nendif()\n' "$SYS" "$SYS" "$SYS" "$SYS" "$SYS" >> "$MF"
+          fi
