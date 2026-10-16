@@ -328,9 +328,30 @@ jobs:
 
       - name: Inject engine libs
         run: |
+          set +e
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
           mkdir -p "$DEST"
-          cp -v engine-libs/*.so "$DEST/"
+          echo "=== engine-libs 内容 ==="
+          ls -lh engine-libs/
+          echo ""
+          echo "=== 注入 engine 特有的 .so（跳过 CS16-client 自编的）==="
+          KEEP="libxash.so libref_gl4es.so libref_gles1.so libref_gles3compat.so libref_gl2.so libref_sw.so libfilesystem_stdio.so libSDL2.so libmainui.so libmenu.so libxashmenu64.so"
+          SKIP="libclient_android_arm64.so libhl_android_arm64.so libserver.so libyapb_android_arm64.so libregamedll_android_arm64.so libclang_rt.asan-aarch64-android.so"
+          for so in engine-libs/*.so; do
+            base=$(basename "$so")
+            skip=0
+            for s in $SKIP; do
+              [ "$base" = "$s" ] && skip=1 && break
+            done
+            if [ $skip -eq 1 ]; then
+              echo "SKIP: $base"
+            else
+              cp -v "$so" "$DEST/"
+            fi
+          done
+          echo ""
+          echo "=== 最终 jniLibs 内容 ==="
+          ls -lh "$DEST/"
 
       - name: Set app name
         run: python3 ci-scripts/set_app_name.py
