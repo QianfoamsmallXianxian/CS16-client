@@ -279,6 +279,32 @@ jobs:
             printf '\n# CI_RELAX_PTR_CAST\nadd_compile_options(-Wno-error=int-to-pointer-cast)\nadd_compile_options(-Wno-error=pointer-to-int-cast)\nadd_compile_options(-Wno-error=int-conversion)\nadd_compile_options(-Wno-error=constant-conversion)\nadd_compile_options(-Wno-error=shorten-64-to-32)\nadd_link_options(-Wl,--undefined-version)\n' >> "$MF"
           fi
 
+      - name: Fix xashmenu link deps
+        run: |
+          set +e
+          MF=3rdparty/mainui_cpp/CMakeLists.txt
+          test -f "$MF" || exit 0
+          if grep -q 'CI_XASHMENU_LINKS' "$MF"; then
+            echo "already patched"
+            exit 0
+          fi
+          {
+            echo ''
+            echo '# CI_XASHMENU_LINKS'
+            echo 'foreach(_tgt ${MAINUI_LIBRARY} xashmenu xashmenu64)'
+            echo '    if(TARGET ${_tgt})'
+            echo '        target_link_libraries(${_tgt} PRIVATE z)'
+            echo '        target_sources(${_tgt} PRIVATE'
+            for f in 3rdparty/mainui_cpp/miniutl/*.cpp; do
+              [ -f "$f" ] && echo "            ${f#3rdparty/mainui_cpp/}"
+            done
+            echo '        )'
+            echo '    endif()'
+            echo 'endforeach()'
+          } >> "$MF"
+          echo "=== patched ==="
+          tail -30 "$MF"
+
       - name: Inject engine libs
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
