@@ -149,6 +149,55 @@ jobs:
           python3 ci-scripts/add_deps.py
           grep -nA30 'dependencies {' android/app/build.gradle | head -35
 
+      - name: Stub CrashReports
+        run: |
+          D=android/app/src/main/java/su/xash/engine/util
+          mkdir -p "$D"
+          cat > "$D/CrashReports.java" << 'JAVA_EOF'
+          package su.xash.engine.util;
+
+          import android.content.Context;
+          import java.io.File;
+          import java.io.FileWriter;
+          import java.io.IOException;
+
+          public class CrashReports {
+              public static final String STACKTRACE_NAME = "stacktrace.txt";
+
+              public static void writeSystemInfo(Context context) {
+                  try {
+                      File dir = new File(context.getFilesDir(), "crashes");
+                      if (!dir.exists()) dir.mkdirs();
+                      File f = new File(dir, "system_info.txt");
+                      FileWriter w = new FileWriter(f, true);
+                      w.write("--- system info ---\n");
+                      w.write("sdk: " + android.os.Build.VERSION.SDK_INT + "\n");
+                      w.write("device: " + android.os.Build.DEVICE + "\n");
+                      w.write("model: " + android.os.Build.MODEL + "\n");
+                      w.write("manufacturer: " + android.os.Build.MANUFACTURER + "\n");
+                      w.close();
+                  } catch (IOException e) {
+                  }
+              }
+
+              public static void writeIntentInfo(Context context, String info) {
+                  try {
+                      File dir = new File(context.getFilesDir(), "crashes");
+                      if (!dir.exists()) dir.mkdirs();
+                      File f = new File(dir, "intent_info.txt");
+                      FileWriter w = new FileWriter(f, true);
+                      w.write(info);
+                      w.write("\n");
+                      w.close();
+                  } catch (IOException e) {
+                  }
+              }
+          }
+          JAVA_EOF
+          echo "=== CrashReports.java ==="
+          ls -la "$D/"
+          head -5 "$D/CrashReports.java"
+
       - name: Integrate engine Java layer
         run: |
           set +e
