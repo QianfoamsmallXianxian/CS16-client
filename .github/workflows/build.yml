@@ -478,51 +478,17 @@ jobs:
         if: steps.build_apk.outcome == 'failure'
         run: exit 1
 
-      - name: Strip system libs from APK
-        run: |
-          set +e
-          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
-          test -n "$APK" || { echo "no apk"; exit 0; }
-          WORK=/tmp/apk_strip
-          rm -rf "$WORK"
-          mkdir -p "$WORK"
-          cp "$APK" "$WORK/orig.apk"
-          cd "$WORK"
-          unzip -q orig.apk -d extract
-          rm -f extract/lib/arm64-v8a/libandroid.so
-          rm -f extract/lib/arm64-v8a/libdl.so
-          rm -f extract/lib/arm64-v8a/liblog.so
-          rm -f extract/lib/armeabi-v7a/libandroid.so
-          rm -f extract/lib/armeabi-v7a/libdl.so
-          rm -f extract/lib/armeabi-v7a/liblog.so
-          cd extract
-          zip -qr ../stripped.apk . -x "META-INF/*"
-          cd ..
-          ALIGN=$(find /usr/local/lib/android/sdk -name zipalign -type f | sort -V | tail -1)
-          APKSIGNER=$(find /usr/local/lib/android/sdk -name apksigner -type f | sort -V | tail -1)
-          if [ -n "$ALIGN" ]; then
-            "$ALIGN" -f -p 4 stripped.apk aligned.apk
-          else
-            cp stripped.apk aligned.apk
-          fi
-          if [ ! -f ~/.android/debug.keystore ]; then
-            mkdir -p ~/.android
-            keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
-          fi
-          if [ -n "$APKSIGNER" ]; then
-            "$APKSIGNER" sign --ks ~/.android/debug.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --min-sdk-version 21 --max-sdk-version 35 --out final.apk aligned.apk
-          else
-            cp aligned.apk final.apk
-          fi
-          cp final.apk "$GITHUB_WORKSPACE/CS16Client-${TARGET_ABI}-standalone.apk"
-          echo "=== final libs ==="
-          unzip -l "$GITHUB_WORKSPACE/CS16Client-${TARGET_ABI}-standalone.apk" | grep '\.so$'
-          ls -lh "$GITHUB_WORKSPACE/CS16Client-${TARGET_ABI}-standalone.apk"
-
       - name: Package APK
         if: success()
         run: |
-          test -f "CS16Client-${TARGET_ABI}-standalone.apk" || { echo "no apk"; exit 1; }
+          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          test -n "$APK" || { echo "no apk"; exit 1; }
+          cp "$APK" "CS16Client-${TARGET_ABI}-standalone.apk"
+          APKSIGNER=$(find /usr/local/lib/android/sdk -name apksigner -type f | sort -V | tail -1)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --verbose "CS16Client-${TARGET_ABI}-standalone.apk" || true
+          fi
+          unzip -l "CS16Client-${TARGET_ABI}-standalone.apk" | grep '\.so$'
           sha256sum "CS16Client-${TARGET_ABI}-standalone.apk"
 
       - uses: actions/upload-artifact@v4
