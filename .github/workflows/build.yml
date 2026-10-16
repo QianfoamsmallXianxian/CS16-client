@@ -69,7 +69,7 @@ jobs:
           tar -xzf /tmp/sdl.tar.gz -C 3rdparty
           mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
 
-      - name: Patch deps
+      - name: Patch deps_android
         run: |
           if [ -f scripts/gha/deps_android.sh ]; then
             printf '#!/bin/bash\nexit 0\n' > scripts/gha/deps_android.sh
@@ -88,9 +88,6 @@ jobs:
         run: |
           mkdir -p engine-libs
           find . -path '*arm64*' -name '*.so' -exec cp -v {} engine-libs/ \; || true
-          if [ -z "$(ls -A engine-libs 2>/dev/null)" ]; then
-            find . -name '*.so' ! -path '*x86*' ! -path '*armeabi-v7a*' -exec cp -v {} engine-libs/ \;
-          fi
           test -n "$(ls -A engine-libs 2>/dev/null)"
 
       - uses: actions/upload-artifact@v4
@@ -144,22 +141,27 @@ jobs:
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
           "$SDKMGR" --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" "cmake;${ANDROID_CMAKE}" || true
 
-      - name: Add Android deps
+      - name: Integrate engine Java layer
         run: |
-          python3 ci-scripts/add_deps.py
-          grep -nA30 'dependencies {' android/app/build.gradle | head -35
-
-      - name: Patch XashActivity for crash tracking
-        run: |
-          python3 ci-scripts/patch_xashactivity.py
-          echo "=== XashActivity onCreate ==="
-          grep -nA10 'onCreate' android/app/src/main/java/su/xash/engine/XashActivity.java | head -20
+          set +e
+          rm -rf /tmp/xash /tmp/SDL2
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/FWGS/xash3d-fwgs /tmp/xash
+          cd /tmp/xash
+          git sparse-checkout set android/app/src/main/java android/app/src/main/res android/app/src/main/assets
+          cd $GITHUB_WORKSPACE
+          git clone --depth 1 --branch release-2.30.x https://github.com/libsdl-org/SDL.git /tmp/SDL2
+          mkdir -p android/app/src/main/java/org
+          if [ -d /tmp/SDL2/android-project/app/src/main/java/org/libsdl ]; then
+            cp -rv /tmp/SDL2/android-project/app/src/main/java/org/libsdl android/app/src/main/java/org/ 2>/dev/null
+          fi
+          python3 ci-scripts/integrate_engine.py
 
       - name: Stub CrashReports
         run: |
           D=android/app/src/main/java/su/xash/engine/util
           mkdir -p "$D"
-          cat > "$D/CrashReports.java" << 'JAVA_EOF'
+          if [ ! -f "$D/CrashReports.java" ]; then
+            cat > "$D/CrashReports.java" << 'JAVA_EOF'
           package su.xash.engine.util;
 
           import android.content.Context;
@@ -169,163 +171,38 @@ jobs:
 
           public class CrashReports {
               public static final String STACKTRACE_NAME = "stacktrace.txt";
-
-              public static void writeSystemInfo(Context context) {
+              public static void writeSystemInfo(Context c) {
                   try {
-                      File dir = new File(context.getFilesDir(), "crashes");
+                      File dir = new File(c.getFilesDir(), "crashes");
                       if (!dir.exists()) dir.mkdirs();
-                      File f = new File(dir, "system_info.txt");
-                      FileWriter w = new FileWriter(f, true);
-                      w.write("--- system info ---\n");
+                      FileWriter w = new FileWriter(new File(dir, "system_info.txt"), true);
                       w.write("sdk: " + android.os.Build.VERSION.SDK_INT + "\n");
                       w.write("device: " + android.os.Build.DEVICE + "\n");
                       w.write("model: " + android.os.Build.MODEL + "\n");
-                      w.write("manufacturer: " + android.os.Build.MANUFACTURER + "\n");
                       w.close();
-                  } catch (IOException e) {
-                  }
+                  } catch (IOException e) {}
               }
-
-              public static void writeIntentInfo(Context context, String info) {
+              public static void writeIntentInfo(Context c, String info) {
                   try {
-                      File dir = new File(context.getFilesDir(), "crashes");
+                      File dir = new File(c.getFilesDir(), "crashes");
                       if (!dir.exists()) dir.mkdirs();
-                      File f = new File(dir, "intent_info.txt");
-                      FileWriter w = new FileWriter(f, true);
+                      FileWriter w = new FileWriter(new File(dir, "intent_info.txt"), true);
                       w.write(info);
                       w.write("\n");
                       w.close();
-                  } catch (IOException e) {
-                  }
+                  } catch (IOException e) {}
               }
           }
           JAVA_EOF
-          echo "=== CrashReports.java ==="
-          ls -la "$D/"
-          head -5 "$D/CrashReports.java"
-
-      - name: Integrate engine Java layer
-        run: |
-          set +e
-          rm -rf /tmp/xash
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/FWGS/xash3d-fwgs /tmp/xash
-          cd /tmp/xash
-          git sparse-checkout set android/app/src/main/java android/app/src/main/res android/app/src/main/assets
-          cd $GITHUB_WORKSPACE
-          if [ -d /tmp/xash/android/app/src/main/java/su/xash/engine ]; then
-            find /tmp/xash/android/app/src/main/java/su/xash/engine -type d
-            find /tmp/xash/android/app/src/main/java/su/xash/engine -name '*.java' | wc -l
-            ls -la /tmp/xash/android/app/src/main/java/su/xash/engine/util/ 2>/dev/null || echo "no util dir"
-            find /tmp/xash -name 'CrashReports.java' 2>/dev/null || echo "not found"
           fi
-          rm -rf /tmp/SDL2
-          git clone --depth 1 --branch release-2.30.x https://github.com/libsdl-org/SDL.git /tmp/SDL2
-          mkdir -p android/app/src/main/java/org
-          if [ -d /tmp/SDL2/android-project/app/src/main/java/org/libsdl ]; then
-            cp -rv /tmp/SDL2/android-project/app/src/main/java/org/libsdl android/app/src/main/java/org/
-          fi
-          python3 ci-scripts/integrate_engine.py
-          echo "=== Java layer final ==="
-          find android/app/src/main/java -name '*.java' | wc -l
-          find android/app/src/main/java/su/xash/engine -name '*.java' | head -30
 
-      - name: Force mainui_cpp to cs16-client branch
+      - name: Add Android deps
         run: |
-          set +e
-          rm -rf 3rdparty/mainui_cpp
-          git clone --depth 1 --branch cs16-client --recursive https://github.com/Velaron/mainui_cpp 3rdparty/mainui_cpp
-          cd 3rdparty/mainui_cpp
-          git branch --show-current
-          git log -1 --oneline
-          for f in menus/client/JoinGame.cpp menus/client/JoinClass.cpp menus/client/ClientWindow.cpp; do
-            [ -f "$f" ] && echo "OK: $f" || echo "MISSING: $f"
-          done
-          cd $GITHUB_WORKSPACE
+          python3 ci-scripts/add_deps.py
 
-      - name: Prepare SDL
+      - name: Patch XashActivity for crash tracking
         run: |
-          mkdir -p 3rdparty
-          rm -rf 3rdparty/SDL
-          wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz" -O /tmp/sdl.tar.gz
-          tar -xzf /tmp/sdl.tar.gz -C 3rdparty
-          mv "3rdparty/SDL2-${SDL_VERSION}" 3rdparty/SDL
-
-      - name: Generate cross file
-        run: |
-          NDK="$ANDROID_NDK_HOME"
-          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          printf "[binaries]\nc = '%s/aarch64-linux-android21-clang'\ncpp = '%s/aarch64-linux-android21-clang++'\nar = '%s/llvm-ar'\nstrip = '%s/llvm-strip'\npkg-config = '/usr/bin/pkg-config'\n[host_machine]\nsystem = 'android'\ncpu_family = 'aarch64'\ncpu = 'aarch64'\nendian = 'little'\n[properties]\nneeds_exe_wrapper = true\n" "$BIN" "$BIN" "$BIN" "$BIN" > /tmp/android-arm64.ini
-          cat /tmp/android-arm64.ini
-
-      - name: Build expat
-        run: |
-          set -e
-          SYS=${{ github.workspace }}/sysroot
-          mkdir -p "$SYS"
-          cd /tmp
-          wget -q https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz -O expat.tar.gz
-          tar xzf expat.tar.gz
-          cd expat-2.5.0
-          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF
-          cmake --build build --target install
-
-      - name: Build freetype
-        run: |
-          set -e
-          SYS=${{ github.workspace }}/sysroot
-          cd /tmp
-          wget -q https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz -O ft.tar.gz
-          tar xzf ft.tar.gz
-          cd freetype-2.13.2
-          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake -DANDROID_ABI=${TARGET_ABI} -DANDROID_PLATFORM=android-21 -DCMAKE_INSTALL_PREFIX="$SYS" -DFT_DISABLE_HARFBUZZ=TRUE -DFT_DISABLE_BZIP2=TRUE -DFT_DISABLE_PNG=TRUE -DFT_DISABLE_BROTLI=TRUE -DFT_DISABLE_ZLIB=TRUE -DBUILD_SHARED_LIBS=OFF
-          cmake --build build --target install
-
-      - name: Build fontconfig
-        run: |
-          set -e
-          SYS=${{ github.workspace }}/sysroot
-          cd /tmp
-          wget -q https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/2.14.2/fontconfig-2.14.2.tar.gz -O fc.tar.gz
-          tar xzf fc.tar.gz
-          cd fontconfig-2.14.2
-          export PKG_CONFIG_PATH="$SYS/lib/pkgconfig"
-          export PKG_CONFIG_LIBDIR="$SYS/lib/pkgconfig"
-          unset PKG_CONFIG_SYSROOT_DIR
-          meson setup build --cross-file /tmp/android-arm64.ini --prefix="$SYS" --default-library=static -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled || {
-            cat build/meson-logs/meson-log.txt 2>/dev/null | tail -80
-            exit 1
-          }
-          ninja -C build
-          ninja -C build install
-
-      - name: Patch pc absolute paths
-        env:
-          SYS: ${{ github.workspace }}/sysroot
-        run: python3 ci-scripts/patch_pc.py
-
-      - name: Prepend link_directories
-        env:
-          SYS: ${{ github.workspace }}/sysroot
-        run: python3 ci-scripts/prepend_linkdirs.py
-
-      - name: Copy sysroot libs to NDK
-        run: |
-          SYS=${{ github.workspace }}/sysroot
-          NDK_SYS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          DEST_LIB="$NDK_SYS/usr/lib/aarch64-linux-android"
-          DEST_INC="$NDK_SYS/usr/include"
-          mkdir -p "$DEST_LIB" "$DEST_INC"
-          cp -v "$SYS"/lib/*.a "$DEST_LIB/" 2>/dev/null || true
-          cp -rv "$SYS"/include/* "$DEST_INC/" 2>/dev/null || true
-
-      - name: Wire fontconfig
-        run: |
-          SYS=${{ github.workspace }}/sysroot
-          MF=3rdparty/mainui_cpp/CMakeLists.txt
-          test -f "$MF" || exit 0
-          if ! grep -q 'CI_FONTCONFIG_WIRED' "$MF"; then
-            printf '\n# CI_FONTCONFIG_WIRED\nif(TARGET ${MAINUI_LIBRARY})\n    target_include_directories(${MAINUI_LIBRARY} PRIVATE\n        %s/include\n        %s/include/freetype2\n    )\n    target_link_libraries(${MAINUI_LIBRARY} PRIVATE\n        %s/lib/libfontconfig.a\n        %s/lib/libfreetype.a\n        %s/lib/libexpat.a\n    )\nendif()\n' "$SYS" "$SYS" "$SYS" "$SYS" "$SYS" >> "$MF"
-          fi
+          python3 ci-scripts/patch_xashactivity.py || true
 
       - name: Fix FWGSLib
         run: |
@@ -391,36 +268,39 @@ jobs:
           F=android/app/build.gradle
           test -f "$F" || F=android/app/build.gradle.kts
           if [ -f "$F" ]; then
-            cp "$F" "$F.bak"
             sed -i 's/abiFilters[^}]*/abiFilters "arm64-v8a"/' "$F" || true
-            grep -n 'abiFilters' "$F" || true
           fi
           rm -rf android/app/.cxx android/.cxx 2>/dev/null || true
 
-      - name: Inject engine libs
+      - name: Inject engine libs and fix conflicts
         run: |
+          set +e
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
           mkdir -p "$DEST"
-          KEEP="libxash.so libref_gl4es.so libref_gles1.so libref_gles3compat.so libref_gl2.so libref_sw.so libfilesystem_stdio.so libSDL2.so libmenu.so libmainui.so"
+
+          KEEP="libxash.so libref_gl4es.so libfilesystem_stdio.so libSDL2.so libyapb_android_arm64.so"
           for so in engine-libs/*.so; do
             base=$(basename "$so")
             keep=0
             for k in $KEEP; do
               [ "$base" = "$k" ] && keep=1 && break
             done
-            [ $keep -eq 1 ] && cp -v "$so" "$DEST/"
+            if [ $keep -eq 1 ]; then
+              cp -v "$so" "$DEST/"
+            else
+              echo "SKIP: $base"
+            fi
           done
+
+          echo "=== 删除 xash3d 原版 libmenu.so ==="
+          rm -f "$DEST/libmenu.so"
+          echo "=== 删除假的系统库 ==="
+          rm -f "$DEST/libandroid.so" "$DEST/libdl.so" "$DEST/liblog.so"
+          echo "=== 最终 jniLibs ==="
           ls -lh "$DEST/"
 
       - name: Set app name
         run: python3 ci-scripts/set_app_name.py
-
-      - name: Verify crash handler source
-        run: |
-          ls -la android/app/src/main/cpp/
-          ls -la android/app/src/main/java/su/xash/cs16client/
-          grep -n 'externalNativeBuild' android/app/build.gradle || echo "missing"
-          grep -n 'cs16_crash_handler' android/app/src/main/cpp/CMakeLists.txt
 
       - name: Build APK
         id: build_apk
