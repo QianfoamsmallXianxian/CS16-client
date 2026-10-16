@@ -87,7 +87,6 @@ jobs:
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE}" || true
-          ls "$GITHUB_WORKSPACE/sdk/ndk/" || true
 
       - name: Prepare deps
         run: |
@@ -242,8 +241,6 @@ jobs:
             echo '    endif()'
             echo 'endfunction()'
           } > cmake/FWGSLib.cmake
-          cat cmake/FWGSLib.cmake
-
           if ! grep -q 'list(APPEND CMAKE_MODULE_PATH' "$MF"; then
             sed -i "1i list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/../../cmake\")" "$MF"
           fi
@@ -317,7 +314,6 @@ jobs:
           print("renamed:", renamed)
           print("removed:", removed)
           PY
-          grep -rn 'Color\.cpp' 3rdparty/mainui_cpp/ || echo "OK: none"
 
       - name: Fix int64 typedef conflict
         run: |
@@ -390,14 +386,12 @@ jobs:
                       changed.append(str(f))
           print("changed:", changed)
           PY
-          grep -rn 'uint64_bruh\|int64_bruh\|#define uint64\|#define int64\|#undef uint64\|#undef int64' cl_dll/ dlls/ common/ public/ 3rdparty/mainui_cpp/ 2>/dev/null || echo "OK: none"
 
       - name: Fix mainui XASH_SDK path
         run: |
           set +e
           MF=3rdparty/mainui_cpp/CMakeLists.txt
           test -f "$MF" || { echo "no mainui CMakeLists"; exit 0; }
-          grep -n 'XASH_SDK' "$MF" || true
           if grep -q 'xashmenu fixed include dirs' "$MF"; then
             echo "already injected include dirs"
           else
@@ -429,17 +423,12 @@ jobs:
           for old, new in [
               (r'set\s*\(\s*XASH_SDK\s+"\.\./"\s*\)', 'set(XASH_SDK "../../")'),
               (r'set\s*\(\s*XASH_SDK\s+\.\./\s*\)', 'set(XASH_SDK "../../")'),
-              (r'set\s*\(\s*XASH_SDK\s+"\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./"\s*\)',
-               'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
-              (r'set\s*\(\s*XASH_SDK\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./\s*\)',
-               'set(XASH_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../..")'),
           ]:
               s, n = re.subn(old, new, s)
               if n:
-                  print("XASH_SDK pattern hit:", n)
+                  print("XASH_SDK hit:", n)
           p.write_text(s)
           PY
-          grep -n 'XASH_SDK\|xashmenu fixed include' "$MF" || true
 
       - name: Add STDINT_H for xashmenu
         run: |
@@ -458,7 +447,6 @@ jobs:
             } >> "$MF"
             echo "injected STDINT_H"
           fi
-          grep -n 'STDINT_H' "$MF" || true
 
       - name: Ensure _format macro in port.h
         run: |
@@ -511,7 +499,47 @@ jobs:
           mv /tmp/mi_new.h "$F"
           echo "injected _format fallback"
           grep -n '_format_fallback_injected' "$F" || true
-          sed -n '1,15p' "$F" || true
+
+      - name: Patch int3 in ReGameDLL for arm64
+        run: |
+          set +e
+          echo "=== scan int3 ==="
+          grep -rn 'int3' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -20 || true
+          python3 - << 'PY'
+          import pathlib, re
+          roots = ['3rdparty/ReGameDLL_CS', '3rdparty/mainui_cpp', 'dlls', 'cl_dll']
+          pats = [
+              (re.compile(r'__asm__\s+__volatile__\s*\(\s*"int3;?"\s*\)'), '__builtin_trap()'),
+              (re.compile(r'__asm__\s+volatile\s*\(\s*"int3;?"\s*\)'), '__builtin_trap()'),
+              (re.compile(r'__asm__\s*\(\s*"int3;?"\s*\)'), '__builtin_trap()'),
+              (re.compile(r'asm\s+volatile\s*\(\s*"int3;?"\s*\)'), '__builtin_trap()'),
+              (re.compile(r'asm\s*\(\s*"int3;?"\s*\)'), '__builtin_trap()'),
+              (re.compile(r'__asm__\s+__volatile__\s*\(\s*"int\s+\$3"\s*\)'), '__builtin_trap()'),
+          ]
+          changed = []
+          for root in roots:
+              r = pathlib.Path(root)
+              if not r.exists():
+                  continue
+              for f in r.rglob('*'):
+                  if not f.is_file():
+                      continue
+                  if f.suffix not in ('.cpp','.cc','.cxx','.c','.h','.hpp','.hxx','.inl'):
+                      continue
+                  try:
+                      s = f.read_text()
+                  except Exception:
+                      continue
+                  s2 = s
+                  for pat, rep in pats:
+                      s2 = pat.sub(rep, s2)
+                  if s2 != s:
+                      f.write_text(s2)
+                      changed.append(str(f))
+          print("changed:", changed)
+          PY
+          echo "=== remaining int3 ==="
+          grep -rn 'int3' 3rdparty/ReGameDLL_CS/ 2>/dev/null | head -10 || echo "OK: none"
 
       - name: Inject engine libs
         run: |
