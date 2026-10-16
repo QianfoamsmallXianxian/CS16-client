@@ -144,6 +144,18 @@ jobs:
           yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
           "$SDKMGR" --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" "cmake;${ANDROID_CMAKE}" || true
 
+      - name: Force mainui_cpp to cs16-client branch
+        run: |
+          set +e
+          rm -rf 3rdparty/mainui_cpp
+          git clone --depth 1 --branch cs16-client --recursive https://github.com/Velaron/mainui_cpp 3rdparty/mainui_cpp
+          cd 3rdparty/mainui_cpp
+          git branch --show-current
+          git log -1 --oneline
+          for f in menus/client/JoinGame.cpp menus/client/JoinClass.cpp menus/client/ClientWindow.cpp; do
+            [ -f "$f" ] && echo "OK: $f" || echo "MISSING: $f"
+          done
+
       - name: Prepare SDL
         run: |
           mkdir -p 3rdparty
