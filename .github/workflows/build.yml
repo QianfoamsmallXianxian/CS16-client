@@ -386,6 +386,69 @@ jobs:
             mv /tmp/mi_new.h "$F"
           fi
 
+      - name: Diagnose saverestore line 429
+        run: |
+          set +e
+          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
+          if [ -f "$F" ]; then
+            echo "=== line 429 ==="
+            sed -n '429p' "$F"
+            echo "=== context 424-434 ==="
+            sed -n '424,434p' "$F"
+            echo "=== uint32 casts in file ==="
+            grep -nE '\(uint32\)|reinterpret_cast<uint32|static_cast<uint32' "$F" | head -20
+          fi
+
+      - name: Force fix saverestore line 429
+        run: |
+          set +e
+          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
+          test -f "$F" || exit 0
+          python3 - << 'PY'
+          import pathlib, re
+          p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
+          lines = p.read_text().splitlines()
+          if len(lines) < 429:
+              raise SystemExit(0)
+          idx = 428
+          orig = lines[idx]
+          new = orig
+          new = new.replace('(uint32)', '(uint32)(uintptr_t)')
+          new = new.replace('reinterpret_cast<uint32>', 'reinterpret_cast<uint32>(reinterpret_cast<uintptr_t>')
+          if new != orig:
+              lines[idx] = new
+              p.write_text('\n'.join(lines) + '\n')
+              print('line 429 patched')
+              print('OLD:', orig)
+              print('NEW:', new)
+          else:
+              print('no change; raw line:', repr(orig))
+          PY
+
+      - name: Force fix all saverestore pointer casts
+        run: |
+          set +e
+          F=3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp
+          test -f "$F" || exit 0
+          python3 - << 'PY'
+          import pathlib, re
+          p = pathlib.Path('3rdparty/ReGameDLL_CS/regamedll/dlls/saverestore.cpp')
+          s = p.read_text()
+          pats = [
+              (re.compile(r'\(uint32\)\s*\(\s*([^()]+?)\s*\)'), r'(uint32)(uintptr_t)(\1)'),
+              (re.compile(r'\(uint32\)\s*([A-Za-z_][A-Za-z0-9_]*(?:->|\.[A-Za-z_][A-Za-z0-9_]*)+)'), r'(uint32)(uintptr_t)\1'),
+              (re.compile(r'\(uint32\)\s*([A-Za-z_][A-Za-z0-9_]*)'), r'(uint32)(uintptr_t)\1'),
+          ]
+          for pat, rep in pats:
+              s = pat.sub(rep, s)
+          if 'CI_SAVERESTORE_PATCHED' not in s:
+              s = '/* CI_SAVERESTORE_PATCHED */\n' + s
+          p.write_text(s)
+          print('done')
+          PY
+          echo "=== after 424-434 ==="
+          sed -n '424,434p' "$F" || true
+
       - name: Fix int3 and pointer casts
         run: |
           set +e
