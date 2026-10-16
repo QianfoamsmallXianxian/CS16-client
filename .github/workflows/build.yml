@@ -401,7 +401,7 @@ jobs:
         run: |
           DEST="android/app/src/main/jniLibs/${TARGET_ABI}"
           mkdir -p "$DEST"
-          KEEP="libxash.so libref_gl4es.so libref_gles1.so libref_gles3compat.so libref_gl2.so libref_sw.so libfilesystem_stdio.so libSDL2.so"
+          KEEP="libxash.so libref_gl4es.so libref_gles1.so libref_gles3compat.so libref_gl2.so libref_sw.so libfilesystem_stdio.so libSDL2.so libmenu.so libmainui.so"
           for so in engine-libs/*.so; do
             base=$(basename "$so")
             keep=0
