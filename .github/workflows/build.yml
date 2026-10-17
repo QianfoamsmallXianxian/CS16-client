@@ -156,6 +156,9 @@ jobs:
           fi
           python3 ci-scripts/integrate_engine.py
 
+      - name: Fix soft keyboard crash
+        run: python3 ci-scripts/fix_softkeyboard.py
+
       - name: Stub CrashReports
         run: |
           D=android/app/src/main/java/su/xash/engine/util
