@@ -302,6 +302,11 @@ jobs:
       - name: Fix fontconfig code
         run: python3 ci-scripts/fix_fontconfig.py
 
+      - name: Fix xashmenu miniutl sources
+        run: |
+          python3 ci-scripts/fix_xashmenu_sources.py
+          grep -n 'CI_FORCE_MINIUTL' 3rdparty/mainui_cpp/CMakeLists.txt
+
       - name: Wrap all pkg_check_modules deep
         run: |
           set +e
