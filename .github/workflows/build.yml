@@ -327,6 +327,12 @@ jobs:
           grep -n -B1 -A1 'pkg_check_modules' "$MF"
           grep -n 'REQUIRED' "$MF" | head -20
 
+      - name: Force remove fake libs
+        run: |
+          DEST="android/app/src/main/jniLibs/arm64-v8a"
+          rm -f "$DEST/libandroid.so" "$DEST/libdl.so" "$DEST/liblog.so" "$DEST/libc.so" "$DEST/libm.so" "$DEST/libstdc++.so"
+          ls -la "$DEST/"
+
       - name: Build APK
         id: build_apk
         continue-on-error: true

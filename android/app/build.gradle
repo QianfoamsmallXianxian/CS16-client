@@ -5,6 +5,12 @@ import java.time.temporal.ChronoUnit
 apply plugin: "com.android.application"
 
 android {
+    packaging {
+        jniLibs {
+            excludes += ['**/libandroid.so', '**/libdl.so', '**/liblog.so', '**/libc.so', '**/libm.so', '**/libstdc++.so']
+        }
+    }
+
 	namespace = "su.xash.cs16client"
 	ndkVersion = "28.2.13676358"
 	compileSdk = 36

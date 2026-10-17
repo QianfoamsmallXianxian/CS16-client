@@ -168,8 +168,12 @@ set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 
 include(CPack)
 
+
+
 add_library(cs16_crash_handler SHARED android/app/src/main/cpp/crash_handler.cpp)
-find_library(log-lib log)
-find_library(android-lib android)
-find_library(dl-lib dl)
-target_link_libraries(cs16_crash_handler ${log-lib} ${android-lib} ${dl-lib})
+target_link_libraries(cs16_crash_handler log android dl)
+target_link_options(cs16_crash_handler PRIVATE "-Wl,--exclude-libs,ALL" "-Wl,--as-needed")
+set_target_properties(cs16_crash_handler PROPERTIES
+    BUILD_WITH_INSTALL_RPATH FALSE
+    INSTALL_RPATH ""
+)
