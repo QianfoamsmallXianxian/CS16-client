@@ -1,37 +1,37 @@
-import pathlib, re, sys
-
+import pathlib, sys
 root = pathlib.Path('3rdparty/mainui_cpp')
 if not root.exists():
     sys.exit(0)
 
+h = root / 'font' / 'FreeTypeFont.h'
+h.write_text('''#ifndef FREETYPE_FONT_H
+#define FREETYPE_FONT_H
+#include "BaseFontBackend.h"
+class CFreeTypeFont : public CBaseFont
+{
+public:
+    CFreeTypeFont() {}
+    virtual ~CFreeTypeFont() {}
+    virtual bool LoadFont(const char *name, int size, int flags) { return false; }
+    virtual void GetStringSize(const char *text, int *w, int *h) { if(w)*w=0; if(h)*h=0; }
+    virtual void DrawString(int x, int y, const char *text, int r, int g, int b, int a) {}
+    static void *m_Library;
+};
+#endif
+''')
+
 cpp = root / 'font' / 'FreeTypeFont.cpp'
-if cpp.exists():
-    cpp.write_text("// CI_DISABLED_FREETYPE\n")
+cpp.write_text('''#include "FreeTypeFont.h"
+void *CFreeTypeFont::m_Library = nullptr;
+''')
 
 win = root / 'font' / 'WinAPIFont.cpp'
 if win.exists():
-    win.write_text("// CI_DISABLED_WINAPI\n")
-
-h = root / 'font' / 'FreeTypeFont.h'
-if h.exists():
-    s = h.read_text()
-    if 'CI_DISABLED_FREETYPE' not in s:
-        s = '#if 0 // CI_DISABLED_FREETYPE\n' + s + '\n#endif\n'
-        h.write_text(s)
-
-fm = root / 'font' / 'FontManager.cpp'
-if fm.exists():
-    s = fm.read_text()
-    orig = s
-    s = re.sub(r'^\s*#include\s+["<]FreeTypeFont\.h[">]\s*', '', s, flags=re.M)
-    s = re.sub(r'^(\s*.*CFreeTypeFontBackend.*)$', r'// \1', s, flags=re.M)
-    s = re.sub(r'^(\s*.*CWinAPIFontBackend.*)$', r'// \1', s, flags=re.M)
-    if s != orig:
-        fm.write_text(s)
+    win.write_text("")
 
 cm = root / 'CMakeLists.txt'
 if cm.exists():
     s = cm.read_text()
     if 'CI_NO_FONTCONFIG_AND_FREETYPE' not in s:
-        s += '\n# CI_NO_FONTCONFIG_AND_FREETYPE\nif(ANDROID)\n    add_definitions(-DNO_FONTCONFIG -DNO_FREETYPE)\nendif()\n'
+        s += '\nif(ANDROID)\n    add_definitions(-DNO_FONTCONFIG -DNO_FREETYPE)\nendif()\n'
         cm.write_text(s)
