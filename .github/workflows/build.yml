@@ -332,7 +332,7 @@ jobs:
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew --no-daemon assembleGitDebug 2>&1 | tee /tmp/build_apk.log
+          set -o pipefail; ./gradlew --no-daemon assembleGitDebug 2>&1 | tee /tmp/build_apk.log
 
       - name: Extract errors
         if: always()
