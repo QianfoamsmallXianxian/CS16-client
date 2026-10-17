@@ -299,6 +299,9 @@ jobs:
       - name: Set app name
         run: python3 ci-scripts/set_app_name.py
 
+      - name: Fix fontconfig code
+        run: python3 ci-scripts/fix_fontconfig.py
+
       - name: Wrap all pkg_check_modules deep
         run: |
           set +e
@@ -540,6 +543,69 @@ jobs:
           mkdir -p "$NDK_SYS/usr/lib/aarch64-linux-android" "$NDK_SYS/usr/include"
           cp -v "$SYS"/lib/*.a "$NDK_SYS/usr/lib/aarch64-linux-android/" 2>/dev/null || true
           cp -rv "$SYS"/include/* "$NDK_SYS/usr/include/" 2>/dev/null || true
+
+      - name: Stub fontconfig headers and lib
+        run: |
+          set +e
+          SYS=${{ github.workspace }}/sysroot
+          mkdir -p "$SYS/include/fontconfig"
+          cat > "$SYS/include/fontconfig/fontconfig.h" << 'EOF'
+          #ifndef FAKE_FONTCONFIG_H
+          #define FAKE_FONTCONFIG_H
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          typedef struct _FcConfig FcConfig;
+          typedef struct _FcFontSet FcFontSet;
+          typedef struct _FcPattern FcPattern;
+          typedef struct _FcCharSet FcCharSet;
+          typedef unsigned char FcChar8;
+          typedef int FcBool;
+          typedef int FcMatchKind;
+          #define FcMatchPattern 1
+          #define FcMatchFont 2
+          #define FcSetSystem 0
+          #define FcSetApplication 1
+          FcConfig* FcInitLoadConfigAndFonts(void);
+          FcFontSet* FcConfigGetFonts(FcConfig*, int);
+          FcBool FcInit(void);
+          FcPattern* FcPatternCreate(void);
+          void FcPatternDestroy(FcPattern*);
+          void FcConfigSubstitute(FcConfig*, FcPattern*, FcMatchKind);
+          void FcDefaultSubstitute(FcPattern*);
+          FcPattern* FcFontMatch(FcConfig*, FcPattern*, int*);
+          FcBool FcPatternGetString(FcPattern*, const char*, int, FcChar8**);
+          void FcFontSetDestroy(FcFontSet*);
+          FcBool FcPatternAddString(FcPattern*, const char*, const FcChar8*);
+          void FcPatternPrint(const FcPattern*);
+          #ifdef __cplusplus
+          }
+          #endif
+          #endif
+          EOF
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          cat > /tmp/fc_stub.c << 'EOF'
+          typedef struct _FcConfig FcConfig;
+          typedef struct _FcFontSet FcFontSet;
+          typedef struct _FcPattern FcPattern;
+          typedef unsigned char FcChar8;
+          typedef int FcBool;
+          typedef int FcMatchKind;
+          FcConfig* FcInitLoadConfigAndFonts(void) { return 0; }
+          FcFontSet* FcConfigGetFonts(FcConfig* c, int s) { return 0; }
+          FcBool FcInit(void) { return 0; }
+          FcPattern* FcPatternCreate(void) { return 0; }
+          void FcPatternDestroy(FcPattern* p) {}
+          void FcConfigSubstitute(FcConfig* c, FcPattern* p, FcMatchKind k) {}
+          void FcDefaultSubstitute(FcPattern* p) {}
+          FcPattern* FcFontMatch(FcConfig* c, FcPattern* p, int* r) { return 0; }
+          FcBool FcPatternGetString(FcPattern* p, const char* o, int i, FcChar8** s) { return 0; }
+          void FcFontSetDestroy(FcFontSet* s) {}
+          FcBool FcPatternAddString(FcPattern* p, const char* o, const FcChar8* s) { return 0; }
+          void FcPatternPrint(const FcPattern* p) {}
+          EOF
+          "$BIN/aarch64-linux-android21-clang" -c /tmp/fc_stub.c -o /tmp/fc_stub.o
+          "$BIN/llvm-ar" rcs "$SYS/lib/libfontconfig.a" /tmp/fc_stub.o
 
       - name: Wire fontconfig
         run: |
