@@ -6,6 +6,13 @@ if not cm.exists():
 
 s = cm.read_text()
 
+s = s.replace('set(MAINUI_LIBRARY xashmenu64)', 'set(MAINUI_LIBRARY menu)')
+s = s.replace('set(MAINUI_LIBRARY xashmenu)', 'set(MAINUI_LIBRARY menu)')
+s = s.replace('set(MAINUI_LIBRARY "xashmenu64")', 'set(MAINUI_LIBRARY "menu")')
+s = s.replace('set(MAINUI_LIBRARY "xashmenu")', 'set(MAINUI_LIBRARY "menu")')
+s = s.replace('xashmenu64', 'menu')
+s = s.replace('xashmenu', 'menu')
+
 s = re.sub(r'\nif\(ANDROID\)\n    list\(APPEND MAINUI_SOURCES.*?endif\(\)\n', '', s, flags=re.DOTALL)
 
 target_line = 'add_library (${MAINUI_LIBRARY} SHARED ${MAINUI_SOURCES})'
@@ -20,7 +27,6 @@ endif()
 
 '''
     s = s.replace(target_line, inject + target_line)
-    cm.write_text(s)
 else:
     target_line2 = 'add_library(${MAINUI_LIBRARY} SHARED ${MAINUI_SOURCES})'
     if target_line2 in s:
@@ -34,4 +40,5 @@ endif()
 
 '''
         s = s.replace(target_line2, inject + target_line2)
-        cm.write_text(s)
+
+cm.write_text(s)
