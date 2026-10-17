@@ -296,8 +296,17 @@ jobs:
           echo "=== 最终 jniLibs ==="
           ls -lh "$DEST/"
 
-      - name: Set app name
-        run: python3 ci-scripts/set_app_name.py
+      - name: Set app name and FINAL_FIX_LIBS
+        run: |
+          python3 ci-scripts/set_app_name.py
+          DEST="android/app/src/main/jniLibs/arm64-v8a"
+          rm -f "$DEST/libandroid.so" "$DEST/libdl.so" "$DEST/liblog.so"
+          if [ -f "$DEST/libxashmenu64.so" ]; then
+            cp "$DEST/libxashmenu64.so" "$DEST/libmenu.so"
+          fi
+          cp -v engine-libs/libref_gles1.so "$DEST/" || true
+          cp -v engine-libs/libref_gles3compat.so "$DEST/" || true
+          ls -la "$DEST/"
 
       - name: Fix fontconfig code
         run: python3 ci-scripts/fix_fontconfig.py
