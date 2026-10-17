@@ -6,25 +6,30 @@ if not cm.exists():
 
 s = cm.read_text()
 
-s = re.sub(r'\n# CI_FORCE_MINIUTL\nif\(ANDROID\).*?endif\(\)\n', '', s, flags=re.DOTALL)
+s = re.sub(r'\nif\(ANDROID\)\n    list\(APPEND MAINUI_SOURCES.*?endif\(\)\n', '', s, flags=re.DOTALL)
 
 target_line = 'add_library (${MAINUI_LIBRARY} SHARED ${MAINUI_SOURCES})'
 if target_line in s:
-    if 'CI_FORCE_MINIUTL' not in s:
-        inject = '''if(ANDROID)
-    list(APPEND MAINUI_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/miniutl/bitstring.cpp")
-    list(APPEND MAINUI_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/miniutl/generichash.cpp")
+    inject = '''if(ANDROID)
+    file(GLOB ALL_MINIUTL_CPP "${CMAKE_CURRENT_SOURCE_DIR}/miniutl/*.cpp")
+    foreach(_cpp ${ALL_MINIUTL_CPP})
+        list(APPEND MAINUI_SOURCES ${_cpp})
+    endforeach()
+    list(REMOVE_DUPLICATES MAINUI_SOURCES)
 endif()
 
 '''
-        s = s.replace(target_line, inject + target_line)
-        cm.write_text(s)
+    s = s.replace(target_line, inject + target_line)
+    cm.write_text(s)
 else:
     target_line2 = 'add_library(${MAINUI_LIBRARY} SHARED ${MAINUI_SOURCES})'
     if target_line2 in s:
         inject = '''if(ANDROID)
-    list(APPEND MAINUI_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/miniutl/bitstring.cpp")
-    list(APPEND MAINUI_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/miniutl/generichash.cpp")
+    file(GLOB ALL_MINIUTL_CPP "${CMAKE_CURRENT_SOURCE_DIR}/miniutl/*.cpp")
+    foreach(_cpp ${ALL_MINIUTL_CPP})
+        list(APPEND MAINUI_SOURCES ${_cpp})
+    endforeach()
+    list(REMOVE_DUPLICATES MAINUI_SOURCES)
 endif()
 
 '''
